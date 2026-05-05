@@ -10,6 +10,7 @@ Clone or copy this repo to `%USERPROFILE%\Scripts`, then add the following funct
 function projectdump { & "$env:USERPROFILE\Scripts\projectdump.ps1" @args }
 function pullall     { & "$env:USERPROFILE\Scripts\pullall.ps1" @args }
 function specs       { & "$env:USERPROFILE\Scripts\specs.ps1" @args }
+function applygpupreferences { & "$env:USERPROFILE\Scripts\Apply-GPUPreferences.ps1" @args }
 ```
 
 Reload your profile or restart your terminal for changes to take effect.
@@ -20,7 +21,7 @@ Reload your profile or restart your terminal for changes to take effect.
 
 ### `Apply-GPUPreferences.ps1`
 
-Pins a set of applications to the RTX 4060 Ti via the Windows GPU Preferences registry key (`HKCU:\Software\Microsoft\DirectX\UserGpuPreferences`). Useful on multi-GPU systems where you want secondary/recording apps to stay off your primary GPU.
+Pins a set of applications to your preferred GPU via the Windows GPU Preferences registry key (`HKCU:\Software\Microsoft\DirectX\UserGpuPreferences`). Useful on multi-GPU systems where you want secondary/recording apps to stay off your primary GPU.
 
 **Covered apps:** Brave Browser, Discord (all versioned `app-*` directories), Medal, Spotify.
 
@@ -29,8 +30,6 @@ Run it manually any time — it's a one-shot script, no scheduled task or backgr
 ```powershell
 .\Apply-GPUPreferences.ps1
 ```
-
-> To retarget a different GPU, update `$gpuPref` with the correct adapter ID and preference flags.
 
 ---
 
