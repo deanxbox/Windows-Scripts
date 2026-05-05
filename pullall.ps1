@@ -60,7 +60,7 @@ while ($completed.Count -lt $jobs.Count) {
             [Console]::SetCursorPosition(0, $targetLine)
             if ($result.Success) {
                 $short = if ($result.Output -match "Already up to date") { "Already up to date" } else { "Pulled" }
-                Write-Host "  [   DONE  ] $($entry.Name) — $short          " -ForegroundColor Green
+                Write-Host "  [   DONE  ] $($entry.Name) - $short          " -ForegroundColor Green
             } else {
                 Write-Host "  [  ERROR  ] $($entry.Name)                    " -ForegroundColor Red
             }
