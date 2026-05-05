@@ -164,8 +164,8 @@ function Add-NewProgram($config) {
 
     Write-Host ""
     Write-Host "  Install type:"
-    Write-Host "  [1] Standard  — fixed exe path(s)"
-    Write-Host "  [2] Updating  — scans versioned app-* subfolders (Discord, Medal, etc.)"
+    Write-Host "  [1] Standard  - fixed exe path(s)"
+    Write-Host "  [2] Updating  - scans versioned app-* subfolders (Discord, Medal, etc.)"
     $typeChoice = (Read-Host "  Choice [1/2]").Trim()
 
     if ($typeChoice -eq '1') {
@@ -184,7 +184,7 @@ function Add-NewProgram($config) {
         $newEntry = [PSCustomObject]@{ name = $name; paths = $paths }
 
     } elseif ($typeChoice -eq '2') {
-        Write-Host "  Base install folder — the parent that contains Update.exe and app-* subfolders."
+        Write-Host "  Base install folder - the parent that contains Update.exe and app-* subfolders."
         $base = (Read-Host "  Base folder (e.g. %LOCALAPPDATA%\Discord)").Trim()
         if (-not $base) {
             Write-Host "  Cancelled." -ForegroundColor Yellow
@@ -233,7 +233,7 @@ foreach ($app in @($config.apps)) {
 }
 
 Write-Host ""
-Write-Host ("Done — {0} executable(s) pinned." -f $script:total) -ForegroundColor Green
+Write-Host ("Done - {0} executable(s) pinned." -f $script:total) -ForegroundColor Green
 
 # Offer to add a new program
 Write-Host ""
@@ -247,7 +247,7 @@ if ($addNew -in 'Y', 'y') {
         Write-Host "Applying to new entry..." -ForegroundColor Cyan
         Apply-AppEntry $newEntry $gpuPref
         Write-Host ""
-        Write-Host ("Done — {0} total executable(s) pinned." -f $script:total) -ForegroundColor Green
+        Write-Host ("Done - {0} total executable(s) pinned." -f $script:total) -ForegroundColor Green
     }
 }
 

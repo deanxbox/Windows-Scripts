@@ -36,7 +36,7 @@ Get-ChildItem -Path $scriptsDir -Filter "*.ps1" |
         # Write $env:USERPROFILE literally (escaped) so the profile stays portable
         $entry = "function $funcName { & `"`$env:USERPROFILE\Scripts\$($file.Name)`" @args }"
 
-        # Match by filename — avoids false positives from function name collisions
+        # Match by filename - avoids false positives from function name collisions
         if ($profileContent -match [regex]::Escape($file.Name)) {
             Write-Host ("  skip  {0,-22} ({1})" -f $funcName, $file.Name) -ForegroundColor DarkGray
             $skipped.Add($file.Name)

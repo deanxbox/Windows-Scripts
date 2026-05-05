@@ -37,10 +37,11 @@ $jobs = $repos | ForEach-Object {
 }
 
 # Reserve lines for progress display
-$startLine = [Console]::CursorTop
 foreach ($repo in $repos) {
     Write-Host "  [ PULLING ] $($repo.Name)" -ForegroundColor DarkGray
 }
+# Capture start AFTER printing so any buffer scrolling is already accounted for
+$startLine = [Console]::CursorTop - $repos.Count
 
 $completed = @{}
 
