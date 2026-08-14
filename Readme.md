@@ -4,31 +4,61 @@ Personal PowerShell utility scripts for everyday Windows use.
 
 ## Setup
 
-Clone or copy this repo to `%USERPROFILE%\Scripts`, then add the following functions to your PowerShell profile (`$PROFILE`):
+Clone or copy this repo to `%USERPROFILE%\Scripts`, then run:
 
 ```powershell
-function projectdump { & "$env:USERPROFILE\Scripts\projectdump.ps1" @args }
-function pullall     { & "$env:USERPROFILE\Scripts\pullall.ps1" @args }
-function specs       { & "$env:USERPROFILE\Scripts\specs.ps1" @args }
-function applygpupreferences { & "$env:USERPROFILE\Scripts\Apply-GPUPreferences.ps1" @args }
+npm install
+.\updateprofile.ps1
 ```
 
-Reload your profile or restart your terminal for changes to take effect.
+`npm install` installs the pinned official TOON CLI used by `ConvertTo-Toon.ps1`. The profile script scans this folder and adds profile functions for every `.ps1` script. Reload your profile or restart your terminal for changes to take effect.
 
 ---
 
 ## Scripts
 
+### `ConvertTo-Toon.ps1`
+
+Converts JSON files to the token-efficient [TOON format](https://toonformat.dev) by using the official `@toon-format/cli` package.
+
+Requires Node.js/npm with `npx` available on `PATH`. The first conversion may download the CLI package.
+
+```powershell
+.\ConvertTo-Toon.ps1 .\data.json
+.\ConvertTo-Toon.ps1 . -Recurse
+.\ConvertTo-Toon.ps1 . -Recurse -OutputDirectory .\toon-output
+.\ConvertTo-Toon.ps1 . -Recurse -ThrottleLimit 4
+.\ConvertTo-Toon.ps1 . -Recurse -ThrottleLimit 1
+.\ConvertTo-Toon.ps1 .\data.json -Force
+```
+
+By default, each `.toon` file is written beside its source JSON. `-OutputDirectory` writes files beneath a separate destination while preserving relative subdirectories. Existing files are not replaced unless `-Force` is supplied.
+
+Multiple files convert concurrently by default. Automatic concurrency uses up to the logical processor count, eight workers, or the number of files, whichever is lowest. Set `-ThrottleLimit 1` for sequential operation or provide an explicit value from 2 to 64.
+
+Large individual JSON files use the official CLI's incremental input and output streaming, including arbitrary nested objects and top-level arrays. The script intentionally does not request token statistics because `--stats` builds the complete TOON output in memory.
+
+Completed conversions are written to temporary files and moved into place only after success, so failed conversions do not leave partial output or destroy an existing file when `-Force` is used.
+
+The pinned repository-local CLI is preferred after `npm install`. If it is absent, the script falls back to `npx --yes @toon-format/cli@4.1.1` for compatibility while retaining the same exact version.
+
+Each attempted conversion returns a structured result containing the source path, destination path, success state, error message, and duration in milliseconds.
+
+---
+
 ### `Apply-GPUPreferences.ps1`
 
 Pins a set of applications to your preferred GPU via the Windows GPU Preferences registry key (`HKCU:\Software\Microsoft\DirectX\UserGpuPreferences`). Useful on multi-GPU systems where you want secondary/recording apps to stay off your primary GPU.
 
-**Covered apps:** Brave Browser, Discord (all versioned `app-*` directories), Medal, Spotify.
+**Configured apps:** Brave Browser, Discord, Medal, Spotify, Wallpaper Engine. Edit `gpu-prefs-apps.json` to add or remove programs.
 
-Run it manually any time — it's a one-shot script, no scheduled task or background process involved.
+Run it manually any time - it's a one-shot script, no scheduled task or background process involved.
 
 ```powershell
 .\Apply-GPUPreferences.ps1
+.\Apply-GPUPreferences.ps1 -AddProgram
+.\Apply-GPUPreferences.ps1 -RemoveProgram
+.\Apply-GPUPreferences.ps1 -WhatIf
 ```
 
 ---
@@ -46,20 +76,40 @@ projectdump . -MaxFileSizeKB 200     # lower the file size limit
 projectdump . -NoClip                # print to stdout instead of clipboard
 ```
 
-**Ignored by default:** `node_modules`, `bin`/`obj`/`dist`, `.git`, `__pycache__`, `venv`, lock files, binaries, images, media, fonts, and more.
+**Ignored by default:** `node_modules`, `bin`/`obj`/`dist`, `.git`, local agent metadata, `.env` files, `__pycache__`, `venv`, lock files, binaries, images, media, fonts, and more. The directory tree is emitted in normal parent-before-child order.
 
 ---
 
 ### `pullall.ps1`
 
-Finds all git repositories in a directory and pulls them concurrently, with a live per-repo status display.
+Scans each immediate child directory and pulls git repositories concurrently. A single progress bar tracks completed directories without printing per-repository git output.
 
 ```powershell
 pullall                              # pull all repos in current directory
 pullall C:\dev                       # pull all repos in a specific path
+pullall C:\dev -ThrottleLimit 4      # limit concurrent pulls
 ```
 
-Each repo shows `[ PULLING ]` while in progress, then updates in-place to `[ DONE ]` (green) or `[ ERROR ]` (red). Any errors are printed in full at the end.
+After the scan, the script lists repositories that changed, repositories that were already current, directories that were not repositories, and failures. Full git output is retained only for failures.
+
+---
+
+### `Set-PowerProfile.ps1`
+
+Switches display, sleep, and processor-state settings between predefined profiles.
+
+```powershell
+setpowerprofile
+setpowerprofile -ProfileName "Always On Minimal"
+setpowerprofile -WhatIf             # preview without changing power settings
+setpowerprofile -NoPause            # do not wait before closing
+```
+
+Profiles are defined near the top of the script and can be edited directly:
+
+1. `Default` - display off after 30 minutes, sleep after 1 hour, normal CPU range.
+2. `Always On` - display and sleep never time out, normal CPU range.
+3. `Always On Minimal` - display and sleep never time out, CPU capped at 50% for lower power and quieter fans.
 
 ---
 
@@ -68,9 +118,29 @@ Each repo shows `[ PULLING ]` while in progress, then updates in-place to `[ DON
 Prints a clean, formatted summary of system hardware and OS information.
 
 ```powershell
-specs
+specs                               # print specs and copy quick-share summary
+specs -NoClipboard                  # do not copy the summary
+specs -NoClear                      # do not clear the terminal first
+specs -IncludeIntegratedGpu         # include GPUs normally filtered out
 ```
 
 Displays: CPU (name, cores/threads, base clock), RAM (total, config, type), GPUs (name, driver version), motherboard, storage drives, and OS details.
 
-Excludes integrated graphics (AMD Radeon iGPU filtered by name) and USB drives from the output.
+RAM type is detected from SMBIOS data where available. USB drives are excluded from storage. By default, the known AMD integrated GPU name is filtered out; pass `-IncludeIntegratedGpu` to show it.
+
+---
+
+### `updateprofile.ps1`
+
+Adds missing function wrappers for scripts in this folder to your PowerShell profile.
+
+Pester test files (`*.Tests.ps1`) are ignored.
+
+```powershell
+.\updateprofile.ps1
+.\updateprofile.ps1 -WhatIf          # preview profile changes
+.\updateprofile.ps1 -NoReload        # skip the reload prompt
+.\updateprofile.ps1 -NoPause         # do not wait before closing
+```
+
+When this repo lives at `%USERPROFILE%\Scripts`, generated functions use `$env:USERPROFILE\Scripts\...`; otherwise they use the detected script directory.

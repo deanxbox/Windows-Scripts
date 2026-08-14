@@ -2,9 +2,18 @@
 # Recursively dumps all relevant project files into clipboard for AI analysis.
 # Usage: projectdump.ps1 [path] [-MaxFileSizeKB 500] [-NoClip]
 
+[CmdletBinding()]
 param(
+    [Parameter(Position = 0)]
+    [ValidateScript({
+        if (Test-Path -LiteralPath $_ -PathType Container) { return $true }
+        throw "Directory does not exist: $_"
+    })]
     [string]$Path = ".",
+
+    [ValidateRange(1, 102400)]
     [int]$MaxFileSizeKB = 500,
+
     [switch]$NoClip
 )
 
@@ -15,7 +24,7 @@ $ignoredDirs = @(
     'node_modules', 'vendor', 'packages', '.nuget',
     'venv', '.venv', 'env', '.env', '__pycache__',
     'site-packages',
-    '.git', '.svn', '.hg',
+    '.git', '.svn', '.hg', '.claude', '.codex', '.serena',
     '.idea', '.vs', '.vscode',
     '.cache', '.tmp', 'tmp', 'temp', 'logs', 'log',
     'generated-sources', 'generated-test-sources',
@@ -44,10 +53,10 @@ $ignoredFiles = @(
     'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
     'Pipfile.lock', 'poetry.lock', 'composer.lock', 'Gemfile.lock',
     'gradle-wrapper.jar', '.DS_Store', 'Thumbs.db',
-    '.gitattributes'
+    '.gitattributes', '.env'
 )
 
-$rootPath = Resolve-Path $Path
+$rootPath = Resolve-Path -LiteralPath $Path
 $lines    = [System.Collections.Generic.List[string]]::new()
 $included = 0
 $skipped  = 0
@@ -60,41 +69,41 @@ $lines.Add("")
 $lines.Add("DIRECTORY STRUCTURE")
 $lines.Add("-" * 40)
 
-# -- Tree via stack (no nested functions, no scope issues) -------------------
-$stack = [System.Collections.Generic.Stack[object]]::new()
-$stack.Push(@{ Dir = $rootPath.Path; Prefix = "" })
+# -- Directory tree ----------------------------------------------------------
+function Add-TreeLine {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Directory,
 
-while ($stack.Count -gt 0) {
-    $frame  = $stack.Pop()
-    $dir    = $frame.Dir
-    $prefix = $frame.Prefix
+        [string]$Prefix = ""
+    )
 
-    $items = Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue |
-             Where-Object { $_.Name -notmatch '^\.' -or $_.Name -eq '.gitignore' } |
-             Sort-Object Name
+    $items = Get-ChildItem -LiteralPath $Directory -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch '^\.' -or $_.Name -eq '.gitignore' } |
+        Sort-Object @{ Expression = { -not $_.PSIsContainer } }, Name
 
-    # Dirs first, then files
-    $items = @($items | Where-Object { $_.PSIsContainer }) + @($items | Where-Object { -not $_.PSIsContainer })
-
+    $items = @($items)
     for ($i = 0; $i -lt $items.Count; $i++) {
         $item      = $items[$i]
         $isLast    = ($i -eq $items.Count - 1)
-        if ($isLast) { $connector = "+-- " } else { $connector = "|-- " }
+        $connector = if ($isLast) { "+-- " } else { "|-- " }
 
         if ($item.PSIsContainer) {
-            if ($ignoredDirs -contains $item.Name.ToLower()) {
-                $lines.Add("${prefix}${connector}$($item.Name)/ [skipped]")
+            if ($ignoredDirs -contains $item.Name.ToLowerInvariant()) {
+                $lines.Add("${Prefix}${connector}$($item.Name)/ [skipped]")
                 continue
             }
-            $lines.Add("${prefix}${connector}$($item.Name)/")
-            if ($isLast) { $newPrefix = $prefix + "    " } else { $newPrefix = $prefix + "|   " }
-            # Push in reverse order so stack processes in correct order
-            $stack.Push(@{ Dir = $item.FullName; Prefix = $newPrefix })
+
+            $lines.Add("${Prefix}${connector}$($item.Name)/")
+            $childPrefix = if ($isLast) { $Prefix + "    " } else { $Prefix + "|   " }
+            Add-TreeLine -Directory $item.FullName -Prefix $childPrefix
         } else {
-            $lines.Add("${prefix}${connector}$($item.Name)")
+            $lines.Add("${Prefix}${connector}$($item.Name)")
         }
     }
 }
+
+Add-TreeLine -Directory $rootPath.Path
 
 $lines.Add("")
 $lines.Add("=" * 80)
@@ -111,21 +120,23 @@ foreach ($file in $allFiles) {
 
     # Skip if inside an ignored directory
     $skipDueToDir = $false
-    foreach ($part in $pathParts[0..($pathParts.Count - 2)]) {
-        if ($ignoredDirs -contains $part.ToLower()) {
-            $skipDueToDir = $true
-            break
+    if ($pathParts.Count -gt 1) {
+        foreach ($part in $pathParts[0..($pathParts.Count - 2)]) {
+            if ($ignoredDirs -contains $part.ToLowerInvariant()) {
+                $skipDueToDir = $true
+                break
+            }
         }
     }
     if ($skipDueToDir) { $skipped++; continue }
 
     # Skip ignored filenames
-    if ($ignoredFiles -contains $file.Name) { $skipped++; continue }
+    if ($ignoredFiles -contains $file.Name -or $file.Name -like '.env.*') { $skipped++; continue }
 
     # Skip ignored extensions
     $skipExt = $false
     foreach ($ignored in $ignoredExtensions) {
-        if ($file.Name.ToLower().EndsWith($ignored)) { $skipExt = $true; break }
+        if ($file.Name.ToLowerInvariant().EndsWith($ignored)) { $skipExt = $true; break }
     }
     if ($skipExt) { $skipped++; continue }
 

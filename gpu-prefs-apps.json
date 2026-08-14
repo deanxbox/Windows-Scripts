@@ -1,34 +1,34 @@
-{
-  "apps": [
-    {
-      "name": "Brave Browser",
-      "paths": [
-        "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
-      ]
-    },
-    {
-      "name": "Discord",
-      "base": "%LOCALAPPDATA%\\Discord",
-      "patterns": [
-        "Update.exe",
-        "app-*\\Discord.exe",
-        "app-*\\modules\\discord_utils-*\\discord_utils\\DiscordSystemHelper.exe"
-      ]
-    },
-    {
-      "name": "Medal",
-      "base": "%LOCALAPPDATA%\\Medal",
-      "patterns": [
-        "Medal.exe",
-        "app-*\\Medal.exe"
-      ]
-    },
-    {
-      "name": "Spotify",
-      "paths": [
-        "%APPDATA%\\Spotify\\Spotify.exe",
-        "%APPDATA%\\Spotify\\SpotifyLauncher.exe"
-      ]
-    }
-  ]
+﻿{
+    "apps":  [
+                 {
+                     "name":  "Brave Browser",
+                     "dirs":  [
+                                  "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application"
+                              ]
+                 },
+                 {
+                     "name":  "Discord",
+                     "base":  "%LOCALAPPDATA%\\Discord"
+                 },
+                 {
+                     "name":  "Medal",
+                     "base":  "%LOCALAPPDATA%\\Medal"
+                 },
+                 {
+                     "name":  "Spotify",
+                     "dirs":  [
+                                  "%APPDATA%\\Spotify"
+                              ]
+                 },
+                 {
+                     "name":  "Wallpaper Engine",
+                     "base":  "C:\\Program Files (x86)\\Steam\\steamapps\\common\\wallpaper_engine"
+                 },
+                 {
+                     "name":  "Fortnite",
+                     "dirs":  [
+                                  "G:\\Fortnite\\FortniteGame\\Binaries\\Win64"
+                              ]
+                 }
+             ]
 }

@@ -4,21 +4,49 @@
 #
 # Timeouts are in minutes. 0 = Never.
 # AC = plugged in.  DC = on battery.
+# Processor values are percentages.
+# Use -WhatIf to preview changes without calling powercfg.
+
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSReviewUnusedParameter", "", Justification = "NoPause is consumed by a nested helper in this script.")]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSShouldProcess", "", Justification = "Nested helpers delegate confirmation to the outer advanced script.")]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseApprovedVerbs", "", Justification = "Helper functions are private to this script and are not exported commands.")]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseShouldProcessForStateChangingFunctions", "", Justification = "Nested helpers delegate confirmation to the outer advanced script.")]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseSingularNouns", "", Justification = "Helper functions are private to this script and return a settings object.")]
+[CmdletBinding(SupportsShouldProcess = $true)]
+param(
+    [Alias("Profile")]
+    [ValidateSet("Default", "Always On", "Always On Minimal")]
+    [string]$ProfileName,
+
+    [switch]$NoPause
+)
 
 # ── Profiles ───────────────────────────────────────────────────────────────────
 
 $profiles = @(
     [PSCustomObject]@{
-        Name      = "Default"
-        Desc      = "Display off: 30 min  |  Sleep: 1 hr"
-        MonitorAC = 30 ;  SleepAC = 60
-        MonitorDC = 30 ;  SleepDC = 60
+        Name           = "Default"
+        Desc           = "Display off: 30 min  |  Sleep: 1 hr  |  CPU: normal"
+        MonitorAC      = 30 ;  SleepAC = 60
+        MonitorDC      = 30 ;  SleepDC = 60
+        ProcessorMinAC = 0  ;  ProcessorMaxAC = 100
+        ProcessorMinDC = 0  ;  ProcessorMaxDC = 100
     },
     [PSCustomObject]@{
-        Name      = "Always On"
-        Desc      = "Display off: Never   |  Sleep: Never"
-        MonitorAC = 0  ;  SleepAC = 0
-        MonitorDC = 0  ;  SleepDC = 0
+        Name           = "Always On"
+        Desc           = "Display off: Never   |  Sleep: Never  |  CPU: normal"
+        MonitorAC      = 0  ;  SleepAC = 0
+        MonitorDC      = 0  ;  SleepDC = 0
+        ProcessorMinAC = 0  ;  ProcessorMaxAC = 100
+        ProcessorMinDC = 0  ;  ProcessorMaxDC = 100
+    },
+    [PSCustomObject]@{
+        Name           = "Always On Minimal"
+        Desc           = "Display off: Never   |  Sleep: Never  |  CPU max: 50%"
+        MonitorAC      = 0  ;  SleepAC = 0
+        MonitorDC      = 0  ;  SleepDC = 0
+        ProcessorMinAC = 0  ;  ProcessorMaxAC = 50
+        ProcessorMinDC = 0  ;  ProcessorMaxDC = 50
     }
 )
 
@@ -30,21 +58,44 @@ function Format-Timeout($min) {
     return "$min min"
 }
 
+function Wait-BeforeExit {
+    if (-not $NoPause) {
+        Read-Host "Press Enter to close"
+    }
+}
+
+function Get-PowerCfgACValue {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Subgroup,
+
+        [Parameter(Mandatory)]
+        [string]$Setting
+    )
+
+    $out = powercfg /query SCHEME_CURRENT $Subgroup $Setting 2>&1 | Out-String
+    if ($out -match 'Current AC Power Setting Index:\s+(0x[\da-fA-F]+)') {
+        return [Convert]::ToInt32($Matches[1], 16)
+    }
+    return $null
+}
+
 # ── Detect current AC settings ─────────────────────────────────────────────────
 
 function Get-CurrentACSettings {
     try {
-        $monOut   = powercfg /query SCHEME_CURRENT SUB_VIDEO   VIDEOIDLE   2>&1 | Out-String
-        $sleepOut = powercfg /query SCHEME_CURRENT SUB_SLEEP   STANDBYIDLE 2>&1 | Out-String
-
-        $monSec   = if ($monOut   -match 'Current AC Power Setting Index:\s+(0x[\da-fA-F]+)') { [Convert]::ToInt32($Matches[1], 16) } else { $null }
-        $sleepSec = if ($sleepOut -match 'Current AC Power Setting Index:\s+(0x[\da-fA-F]+)') { [Convert]::ToInt32($Matches[1], 16) } else { $null }
+        $monSec       = Get-PowerCfgACValue -Subgroup "SUB_VIDEO" -Setting "VIDEOIDLE"
+        $sleepSec     = Get-PowerCfgACValue -Subgroup "SUB_SLEEP" -Setting "STANDBYIDLE"
+        $processorMin = Get-PowerCfgACValue -Subgroup "SUB_PROCESSOR" -Setting "PROCTHROTTLEMIN"
+        $processorMax = Get-PowerCfgACValue -Subgroup "SUB_PROCESSOR" -Setting "PROCTHROTTLEMAX"
 
         if ($null -eq $monSec -or $null -eq $sleepSec) { return $null }
 
         return [PSCustomObject]@{
-            MonitorAC = [int]($monSec   / 60)
-            SleepAC   = [int]($sleepSec / 60)
+            MonitorAC      = [int]($monSec   / 60)
+            SleepAC        = [int]($sleepSec / 60)
+            ProcessorMinAC = $processorMin
+            ProcessorMaxAC = $processorMax
         }
     } catch { return $null }
 }
@@ -52,8 +103,11 @@ function Get-CurrentACSettings {
 function Get-ActiveProfileIndex($current) {
     if (-not $current) { return -1 }
     for ($i = 0; $i -lt $profiles.Count; $i++) {
-        if ($profiles[$i].MonitorAC -eq $current.MonitorAC -and
-            $profiles[$i].SleepAC   -eq $current.SleepAC) { return $i }
+        $p = $profiles[$i]
+        if ($p.MonitorAC -eq $current.MonitorAC -and
+            $p.SleepAC   -eq $current.SleepAC -and
+            $p.ProcessorMinAC -eq $current.ProcessorMinAC -and
+            $p.ProcessorMaxAC -eq $current.ProcessorMaxAC) { return $i }
     }
     return -1
 }
@@ -84,39 +138,52 @@ for ($i = 0; $i -lt $profiles.Count; $i++) {
 # Show current settings if they don't match any profile
 if ($activeIndex -eq -1 -and $current) {
     Write-Host ""
-    Write-Host ("    Current: Display off {0}  |  Sleep {1}" -f `
-        (Format-Timeout $current.MonitorAC), (Format-Timeout $current.SleepAC)) -ForegroundColor DarkGray
+    Write-Host ("    Current: Display off {0}  |  Sleep {1}  |  CPU {2}-{3}%" -f `
+        (Format-Timeout $current.MonitorAC), (Format-Timeout $current.SleepAC),
+        $current.ProcessorMinAC, $current.ProcessorMaxAC) -ForegroundColor DarkGray
 }
 
 Write-Host ""
 Write-Host "    [0] Cancel" -ForegroundColor DarkGray
 Write-Host ""
 
-if (-not $isAdmin) {
+if (-not $isAdmin -and -not $WhatIfPreference) {
     Write-Host "  ! Not running as Administrator - changes may fail." -ForegroundColor Red
     Write-Host ""
 }
 
 # ── Selection ──────────────────────────────────────────────────────────────────
 
-$selected = $null
-while ($true) {
-    $raw = (Read-Host "Select profile").Trim()
-    if ($raw -eq '0') {
-        Write-Host ""
-        Write-Host "Cancelled." -ForegroundColor DarkGray
-        Write-Host ""
-        Read-Host "Press Enter to close"
-        exit
-    }
-    if ($raw -match '^\d+$') {
-        $idx = [int]$raw - 1
-        if ($idx -ge 0 -and $idx -lt $profiles.Count) {
-            $selected = $profiles[$idx]
-            break
+$selected = if ($ProfileName) {
+    $profiles | Where-Object { $_.Name -eq $ProfileName } | Select-Object -First 1
+} else {
+    $null
+}
+
+if (-not $selected) {
+    while ($true) {
+        $inputValue = Read-Host "Select profile"
+        if ($null -eq $inputValue) {
+            throw "No profile selection was provided."
         }
+
+        $raw = $inputValue.Trim()
+        if ($raw -eq '0') {
+            Write-Host ""
+            Write-Host "Cancelled." -ForegroundColor DarkGray
+            Write-Host ""
+            Wait-BeforeExit
+            exit
+        }
+        if ($raw -match '^\d+$') {
+            $idx = [int]$raw - 1
+            if ($idx -ge 0 -and $idx -lt $profiles.Count) {
+                $selected = $profiles[$idx]
+                break
+            }
+        }
+        Write-Host "  Invalid. Enter a number or 0 to cancel." -ForegroundColor Yellow
     }
-    Write-Host "  Invalid. Enter a number or 0 to cancel." -ForegroundColor Yellow
 }
 
 # ── Apply ──────────────────────────────────────────────────────────────────────
@@ -124,16 +191,88 @@ while ($true) {
 Write-Host ""
 Write-Host "Applying '$($selected.Name)'..." -ForegroundColor Cyan
 
-powercfg /change monitor-timeout-ac $selected.MonitorAC
-powercfg /change monitor-timeout-dc $selected.MonitorDC
-powercfg /change standby-timeout-ac $selected.SleepAC
-powercfg /change standby-timeout-dc $selected.SleepDC
+$failures = [System.Collections.Generic.List[string]]::new()
+
+function Set-PowerCfgTimeout {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Argument,
+
+        [Parameter(Mandatory)]
+        [int]$Minutes,
+
+        [Parameter(Mandatory)]
+        [string]$Label
+    )
+
+    if ($PSCmdlet.ShouldProcess("current power scheme", "Set $Label to $(Format-Timeout $Minutes)")) {
+        & powercfg /change $Argument $Minutes
+        if ($LASTEXITCODE -ne 0) {
+            $failures.Add($Label) | Out-Null
+        }
+    }
+}
+
+function Set-PowerCfgIndex {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet("AC", "DC")]
+        [string]$PowerMode,
+
+        [Parameter(Mandatory)]
+        [string]$Subgroup,
+
+        [Parameter(Mandatory)]
+        [string]$Setting,
+
+        [Parameter(Mandatory)]
+        [int]$Value,
+
+        [Parameter(Mandatory)]
+        [string]$Label
+    )
+
+    $argument = if ($PowerMode -eq "AC") { "/setacvalueindex" } else { "/setdcvalueindex" }
+
+    if ($PSCmdlet.ShouldProcess("current power scheme", "Set $Label to $Value")) {
+        & powercfg $argument SCHEME_CURRENT $Subgroup $Setting $Value
+        if ($LASTEXITCODE -ne 0) {
+            $failures.Add($Label) | Out-Null
+        }
+    }
+}
+
+function Apply-CurrentPowerScheme {
+    if ($PSCmdlet.ShouldProcess("current power scheme", "Re-apply active power scheme")) {
+        & powercfg /setactive SCHEME_CURRENT
+        if ($LASTEXITCODE -ne 0) {
+            $failures.Add("active power scheme refresh") | Out-Null
+        }
+    }
+}
+
+Set-PowerCfgTimeout -Argument "monitor-timeout-ac" -Minutes $selected.MonitorAC -Label "AC display timeout"
+Set-PowerCfgTimeout -Argument "monitor-timeout-dc" -Minutes $selected.MonitorDC -Label "DC display timeout"
+Set-PowerCfgTimeout -Argument "standby-timeout-ac" -Minutes $selected.SleepAC -Label "AC sleep timeout"
+Set-PowerCfgTimeout -Argument "standby-timeout-dc" -Minutes $selected.SleepDC -Label "DC sleep timeout"
+Set-PowerCfgIndex -PowerMode "AC" -Subgroup "SUB_PROCESSOR" -Setting "PROCTHROTTLEMIN" -Value $selected.ProcessorMinAC -Label "AC minimum processor state"
+Set-PowerCfgIndex -PowerMode "AC" -Subgroup "SUB_PROCESSOR" -Setting "PROCTHROTTLEMAX" -Value $selected.ProcessorMaxAC -Label "AC maximum processor state"
+Set-PowerCfgIndex -PowerMode "DC" -Subgroup "SUB_PROCESSOR" -Setting "PROCTHROTTLEMIN" -Value $selected.ProcessorMinDC -Label "DC minimum processor state"
+Set-PowerCfgIndex -PowerMode "DC" -Subgroup "SUB_PROCESSOR" -Setting "PROCTHROTTLEMAX" -Value $selected.ProcessorMaxDC -Label "DC maximum processor state"
+Apply-CurrentPowerScheme
 
 # ── Confirm ────────────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "Done." -ForegroundColor Green
+if ($WhatIfPreference) {
+    Write-Host "Preview complete. No settings were changed." -ForegroundColor Yellow
+} elseif ($failures.Count -eq 0) {
+    Write-Host "Done." -ForegroundColor Green
+} else {
+    Write-Host "Completed with $($failures.Count) failure(s): $($failures -join ', ')" -ForegroundColor Red
+}
 Write-Host ("  Display off:  {0}" -f (Format-Timeout $selected.MonitorAC))
 Write-Host ("  Sleep:        {0}" -f (Format-Timeout $selected.SleepAC))
+Write-Host ("  CPU state:    {0}-{1}%" -f $selected.ProcessorMinAC, $selected.ProcessorMaxAC)
 Write-Host ""
-Read-Host "Press Enter to close"
+Wait-BeforeExit

@@ -1,87 +1,177 @@
 # pullall.ps1
-# Concurrently pulls all git repos in a directory with live progress display.
-# Usage: pullall [path]
+# Pulls every immediate child git repository and prints one final summary.
+# Usage: pullall [path] [-ThrottleLimit 8]
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSAvoidUsingWriteHost", "", Justification = "This script intentionally renders a colorized console summary.")]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseUsingScopeModifierInNewRunspaces", "", Justification = "Start-Job receives values through param/ArgumentList rather than closure capture.")]
+[CmdletBinding()]
 param(
-    [string]$Path = "."
+    [Parameter(Position = 0)]
+    [ValidateScript({
+        if (Test-Path -LiteralPath $_ -PathType Container) { return $true }
+        throw "Directory does not exist: $_"
+    })]
+    [string]$Path = ".",
+
+    [ValidateRange(1, 64)]
+    [int]$ThrottleLimit = 8
 )
 
-$repos = Get-ChildItem -Path $Path -Directory | Where-Object { Test-Path "$($_.FullName)\.git" }
+function Get-PullResultKind {
+    param(
+        [Parameter(Mandatory)]
+        [object]$Result
+    )
 
-if (-not $repos) {
-    Write-Host "No git repos found in $Path" -ForegroundColor Red
-    exit
+    if (-not $Result.Success) { return "Error" }
+    if ($Result.Output -match 'Already up[ -]to[ -]date') { return "UpToDate" }
+    return "Updated"
 }
 
-Write-Host "Found $($repos.Count) repos, pulling concurrently...`n" -ForegroundColor Cyan
+function Write-SummaryList {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Title,
 
-# Track state per repo
-$state = @{}
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]]$Items,
+
+        [Parameter(Mandatory)]
+        [ConsoleColor]$Color
+    )
+
+    Write-Host ""
+    Write-Host "$Title ($($Items.Count))" -ForegroundColor $Color
+    if ($Items.Count -eq 0) {
+        Write-Host "  (none)" -ForegroundColor DarkGray
+        return
+    }
+
+    foreach ($item in $Items) {
+        Write-Host "  - $item"
+    }
+}
+
+$resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+$directories = @(Get-ChildItem -LiteralPath $resolvedPath -Directory | Sort-Object Name)
+$repos = [System.Collections.Generic.List[object]]::new()
+$nonRepos = [System.Collections.Generic.List[string]]::new()
+$results = [System.Collections.Generic.List[object]]::new()
+$processedCount = 0
+
+foreach ($directory in $directories) {
+    if (Test-Path -LiteralPath (Join-Path $directory.FullName ".git")) {
+        $repos.Add($directory)
+    }
+    else {
+        $nonRepos.Add($directory.Name)
+        $processedCount++
+        Write-Progress `
+            -Id 1 `
+            -Activity "Scanning and updating directories" `
+            -Status "$processedCount of $($directories.Count) directories" `
+            -PercentComplete (($processedCount / [Math]::Max(1, $directories.Count)) * 100)
+    }
+}
+
+$repoQueue = [System.Collections.Generic.Queue[object]]::new()
 foreach ($repo in $repos) {
-    $state[$repo.Name] = "pending"
+    $repoQueue.Enqueue($repo)
 }
 
-# Start all jobs
-$jobs = $repos | ForEach-Object {
-    $repo = $_
-    $job = Start-Job -ScriptBlock {
-        param($repoPath, $repoName)
-        $output = git -C $repoPath pull 2>&1
-        [PSCustomObject]@{
-            Name    = $repoName
-            Output  = $output -join "`n"
-            Success = $LASTEXITCODE -eq 0
+$runningJobs = [System.Collections.Generic.List[object]]::new()
+
+try {
+    while ($repoQueue.Count -gt 0 -or $runningJobs.Count -gt 0) {
+        while ($repoQueue.Count -gt 0 -and $runningJobs.Count -lt $ThrottleLimit) {
+            $repo = $repoQueue.Dequeue()
+            try {
+                $job = Start-Job -ScriptBlock {
+                    param($RepoPath, $RepoName)
+
+                    $output = git -C $RepoPath pull 2>&1
+                    [PSCustomObject]@{
+                        Name    = $RepoName
+                        Output  = $output -join "`n"
+                        Success = $LASTEXITCODE -eq 0
+                    }
+                } -ArgumentList $repo.FullName, $repo.Name -ErrorAction Stop
+
+                $runningJobs.Add([PSCustomObject]@{ Job = $job; Name = $repo.Name })
+            }
+            catch {
+                $results.Add([PSCustomObject]@{
+                    Name    = $repo.Name
+                    Output  = $_.Exception.Message
+                    Success = $false
+                })
+                $processedCount++
+            }
         }
-    } -ArgumentList $repo.FullName, $repo.Name
-    [PSCustomObject]@{ Job = $job; Name = $repo.Name }
+
+        foreach ($entry in @($runningJobs)) {
+            if ($entry.Job.State -notin 'Completed', 'Failed') { continue }
+
+            $received = @(Receive-Job $entry.Job -ErrorAction SilentlyContinue)
+            $reason = $entry.Job.ChildJobs[0].JobStateInfo.Reason
+            Remove-Job $entry.Job -Force
+            [void]$runningJobs.Remove($entry)
+
+            if ($received.Count -gt 0) {
+                $results.Add($received[-1])
+            }
+            else {
+                $message = if ($reason) { $reason.Message } else { "Job returned no result." }
+                $results.Add([PSCustomObject]@{
+                    Name    = $entry.Name
+                    Output  = $message
+                    Success = $false
+                })
+            }
+
+            $processedCount++
+            Write-Progress `
+                -Id 1 `
+                -Activity "Scanning and updating directories" `
+                -Status "$processedCount of $($directories.Count) directories" `
+                -PercentComplete (($processedCount / [Math]::Max(1, $directories.Count)) * 100)
+        }
+
+        if ($runningJobs.Count -gt 0) {
+            Start-Sleep -Milliseconds 100
+        }
+    }
+}
+finally {
+    foreach ($entry in @($runningJobs)) {
+        Stop-Job $entry.Job -ErrorAction SilentlyContinue
+        Remove-Job $entry.Job -Force -ErrorAction SilentlyContinue
+    }
+    Write-Progress -Id 1 -Activity "Scanning and updating directories" -Completed
 }
 
-# Reserve lines for progress display
-foreach ($repo in $repos) {
-    Write-Host "  [ PULLING ] $($repo.Name)" -ForegroundColor DarkGray
+$updated = @($results | Where-Object { (Get-PullResultKind $_) -eq "Updated" } | Sort-Object Name)
+$upToDate = @($results | Where-Object { (Get-PullResultKind $_) -eq "UpToDate" } | Sort-Object Name)
+$failures = @($results | Where-Object { (Get-PullResultKind $_) -eq "Error" } | Sort-Object Name)
+
+Write-Host "Scanned $($directories.Count) directories in $resolvedPath." -ForegroundColor Cyan
+Write-SummaryList -Title "Updated repositories" -Items @($updated | ForEach-Object Name) -Color Green
+Write-SummaryList -Title "Already up to date" -Items @($upToDate | ForEach-Object Name) -Color DarkCyan
+Write-SummaryList -Title "Not repositories" -Items $nonRepos.ToArray() -Color Yellow
+
+Write-Host ""
+Write-Host "Failures ($($failures.Count))" -ForegroundColor Red
+if ($failures.Count -eq 0) {
+    Write-Host "  (none)" -ForegroundColor DarkGray
 }
-# Capture start AFTER printing so any buffer scrolling is already accounted for
-$startLine = [Console]::CursorTop - $repos.Count
-
-$completed = @{}
-
-while ($completed.Count -lt $jobs.Count) {
-    foreach ($entry in $jobs) {
-        if ($completed.ContainsKey($entry.Name)) { continue }
-        if ($entry.Job.State -in @("Completed", "Failed")) {
-            $result = Receive-Job $entry.Job
-            Remove-Job $entry.Job
-            $completed[$entry.Name] = $result
-
-            # Find line index for this repo
-            $idx = [array]::IndexOf(($repos | ForEach-Object { $_.Name }), $entry.Name)
-            $targetLine = $startLine + $idx
-
-            # Move cursor to that line and overwrite
-            [Console]::SetCursorPosition(0, $targetLine)
-            if ($result.Success) {
-                $short = if ($result.Output -match "Already up to date") { "Already up to date" } else { "Pulled" }
-                Write-Host "  [   DONE  ] $($entry.Name) - $short          " -ForegroundColor Green
-            } else {
-                Write-Host "  [  ERROR  ] $($entry.Name)                    " -ForegroundColor Red
+else {
+    foreach ($failure in $failures) {
+        Write-Host "  - $($failure.Name)" -ForegroundColor Red
+        if ($failure.Output) {
+            foreach ($line in @($failure.Output -split "`r?`n")) {
+                Write-Host "      $line" -ForegroundColor DarkRed
             }
         }
     }
-    Start-Sleep -Milliseconds 100
 }
-
-# Move cursor past the progress block
-[Console]::SetCursorPosition(0, $startLine + $repos.Count)
-Write-Host ""
-
-# Print any errors in full
-$errors = $completed.Values | Where-Object { -not $_.Success }
-if ($errors) {
-    Write-Host "Errors:" -ForegroundColor Red
-    foreach ($e in $errors) {
-        Write-Host "`n$($e.Name)" -ForegroundColor Yellow
-        Write-Host $e.Output
-    }
-}
-
-Write-Host "Done. $($completed.Values.Where({$_.Success}).Count)/$($jobs.Count) succeeded." -ForegroundColor Cyan

@@ -1,0 +1,7 @@
+{
+  "name": "windows-scripts",
+  "private": true,
+  "devDependencies": {
+    "@toon-format/cli": "4.1.1"
+  }
+}
