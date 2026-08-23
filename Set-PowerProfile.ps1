@@ -15,7 +15,7 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [Alias("Profile")]
-    [ValidateSet("Default", "Always On", "Always On Minimal")]
+    [ValidateSet("Default", "Always On", "Always On Fake Sleep", "Always On Minimal")]
     [string]$ProfileName,
 
     [switch]$NoPause
@@ -37,6 +37,14 @@ $profiles = @(
         Desc           = "Display off: Never   |  Sleep: Never  |  CPU: normal"
         MonitorAC      = 0  ;  SleepAC = 0
         MonitorDC      = 0  ;  SleepDC = 0
+        ProcessorMinAC = 0  ;  ProcessorMaxAC = 100
+        ProcessorMinDC = 0  ;  ProcessorMaxDC = 100
+    },
+    [PSCustomObject]@{
+        Name           = "Always On Fake Sleep"
+        Desc           = "Display off: 10 min  |  Sleep: Never  |  CPU: normal"
+        MonitorAC      = 10 ;  SleepAC = 0
+        MonitorDC      = 10 ;  SleepDC = 0
         ProcessorMinAC = 0  ;  ProcessorMaxAC = 100
         ProcessorMinDC = 0  ;  ProcessorMaxDC = 100
     },

@@ -53,11 +53,11 @@ Describe "pullall.ps1" {
 
         $LASTEXITCODE | Should -Be 0
         $output | Should -Match "(?s)Updated repositories \(1\).*repo-updated"
+        $output | Should -Match "(?m)^\s+M\s+file\.txt\r?$"
         $output | Should -Match "(?s)Already up to date \(1\).*repo-current"
         $output | Should -Match "(?s)Not repositories \(1\).*plain-directory"
         $output | Should -Match "(?s)Failures \(1\).*repo-failed"
         $output | Should -Not -Match "Fast-forward"
-        $output | Should -Not -Match "file\.txt"
     }
 
     It "summarizes an empty directory without failing" {

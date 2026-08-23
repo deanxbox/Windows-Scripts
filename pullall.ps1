@@ -53,6 +53,28 @@ function Write-SummaryList {
     }
 }
 
+function Write-UpdatedRepositoryList {
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]]$Items
+    )
+
+    Write-Host ""
+    Write-Host "Updated repositories ($($Items.Count))" -ForegroundColor Green
+    if ($Items.Count -eq 0) {
+        Write-Host "  (none)" -ForegroundColor DarkGray
+        return
+    }
+
+    foreach ($item in $Items) {
+        Write-Host "  - $($item.Name)"
+        foreach ($file in @($item.Files)) {
+            Write-Host "      $file" -ForegroundColor DarkGray
+        }
+    }
+}
+
 $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
 $directories = @(Get-ChildItem -LiteralPath $resolvedPath -Directory | Sort-Object Name)
 $repos = [System.Collections.Generic.List[object]]::new()
@@ -90,11 +112,20 @@ try {
                 $job = Start-Job -ScriptBlock {
                     param($RepoPath, $RepoName)
 
+                    $beforeHead = git -C $RepoPath rev-parse HEAD 2>$null
                     $output = git -C $RepoPath pull 2>&1
+                    $success = $LASTEXITCODE -eq 0
+                    $files = if ($success) {
+                        $afterHead = git -C $RepoPath rev-parse HEAD 2>$null
+                        if ($beforeHead -and $afterHead -and $beforeHead -ne $afterHead) {
+                            @(git -C $RepoPath diff --name-status $beforeHead $afterHead 2>$null)
+                        }
+                    }
                     [PSCustomObject]@{
                         Name    = $RepoName
                         Output  = $output -join "`n"
-                        Success = $LASTEXITCODE -eq 0
+                        Success = $success
+                        Files   = @($files)
                     }
                 } -ArgumentList $repo.FullName, $repo.Name -ErrorAction Stop
 
@@ -105,6 +136,7 @@ try {
                     Name    = $repo.Name
                     Output  = $_.Exception.Message
                     Success = $false
+                    Files   = @()
                 })
                 $processedCount++
             }
@@ -127,6 +159,7 @@ try {
                     Name    = $entry.Name
                     Output  = $message
                     Success = $false
+                    Files   = @()
                 })
             }
 
@@ -156,7 +189,7 @@ $upToDate = @($results | Where-Object { (Get-PullResultKind $_) -eq "UpToDate" }
 $failures = @($results | Where-Object { (Get-PullResultKind $_) -eq "Error" } | Sort-Object Name)
 
 Write-Host "Scanned $($directories.Count) directories in $resolvedPath." -ForegroundColor Cyan
-Write-SummaryList -Title "Updated repositories" -Items @($updated | ForEach-Object Name) -Color Green
+Write-UpdatedRepositoryList -Items $updated
 Write-SummaryList -Title "Already up to date" -Items @($upToDate | ForEach-Object Name) -Color DarkCyan
 Write-SummaryList -Title "Not repositories" -Items $nonRepos.ToArray() -Color Yellow
 

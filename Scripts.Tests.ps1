@@ -75,6 +75,20 @@ Describe "Set-PowerProfile.ps1" {
         $output | Should -Match "Preview complete\. No settings were changed\."
         $output | Should -Not -Match "Not running as Administrator"
     }
+
+    It "offers fake sleep without enabling system sleep" {
+        $output = & $script:PowerShellPath `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File (Join-Path $PSScriptRoot "Set-PowerProfile.ps1") `
+            -ProfileName "Always On Fake Sleep" `
+            -WhatIf `
+            -NoPause 2>&1 | Out-String
+
+        $LASTEXITCODE | Should -Be 0
+        $output | Should -Match "Display off:\s+10 min"
+        $output | Should -Match "Sleep:\s+Never"
+    }
 }
 
 Describe "Apply-GPUPreferences.ps1" {
