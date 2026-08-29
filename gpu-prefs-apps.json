@@ -25,9 +25,15 @@
                      "base":  "C:\\Program Files (x86)\\Steam\\steamapps\\common\\wallpaper_engine"
                  },
                  {
-                     "name":  "Fortnite",
+                     "name":  "Seanime",
                      "dirs":  [
-                                  "G:\\Fortnite\\FortniteGame\\Binaries\\Win64"
+                                  "C:\\Program Files\\Seanime Denshi"
+                              ]
+                 },
+                 {
+                     "name":  "Stremio",
+                     "dirs":  [
+                                  "C:\\Users\\deanm\\AppData\\Local\\Programs\\Stremio"
                               ]
                  }
              ]

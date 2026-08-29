@@ -119,6 +119,10 @@ foreach ($disk in $disks) {
     $sizeGB = [Math]::Round($disk.Size / 1GB, 1)
     Write-Row $disk.Model "${sizeGB} GB" 30
 }
+$logicalDisks = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3"
+foreach ($logicalDisk in $logicalDisks) {
+    Write-Row "$($logicalDisk.DeviceID) Free" "$([Math]::Round($logicalDisk.FreeSpace / 1GB, 1))GB free / $([Math]::Round($logicalDisk.Size / 1GB, 1))GB"
+}
 
 # -- OS ----------------------------------------------------------------------
 Write-Header "OS"
@@ -126,6 +130,8 @@ $os = Get-CimInstance Win32_OperatingSystem
 Write-Row "Name"    $os.Caption
 Write-Row "Version" "$($os.Version) (Build $($os.BuildNumber))"
 Write-Row "Arch"    $os.OSArchitecture
+$uptime = (Get-Date) - $os.LastBootUpTime
+Write-Row "Uptime" ("{0}d {1}h {2}m" -f $uptime.Days, $uptime.Hours, $uptime.Minutes)
 
 Write-Host ""
 Write-Host ("=" * $width) -ForegroundColor Cyan

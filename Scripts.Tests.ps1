@@ -95,12 +95,27 @@ Describe "Apply-GPUPreferences.ps1" {
     It "completes a WhatIf run without registry writes" {
         Mock Read-Host { "H" } -ParameterFilter { $Prompt -eq "Select GPU preference" }
         Mock Read-Host { "" } -ParameterFilter { $Prompt -eq "Select [1]" }
-        Mock Read-Host { "N" } -ParameterFilter { $Prompt -eq "Choice" }
         Mock Get-CimInstance { @() } -ParameterFilter { $ClassName -eq "Win32_VideoController" }
         Mock Get-ChildItem { @() }
 
         { & (Join-Path $PSScriptRoot "Apply-GPUPreferences.ps1") -WhatIf -NoPause *> $null } |
             Should -Not -Throw
-        Should -Invoke Read-Host -Times 3 -Exactly
+        Should -Invoke Read-Host -Times 2 -Exactly
+    }
+}
+
+Describe "ManageGPUApps.ps1" {
+    It "lists configured programs and returns to the menu until quit" {
+        $menuChoices = [System.Collections.Generic.Queue[string]]::new()
+        $menuChoices.Enqueue("L")
+        $menuChoices.Enqueue("Q")
+        Mock Read-Host { $menuChoices.Dequeue() } -ParameterFilter { $Prompt -eq "Choice" }
+
+        $output = & (Join-Path $PSScriptRoot "ManageGPUApps.ps1") -NoPause 6>&1 | Out-String
+
+        $output | Should -Match "Configured Programs"
+        $output | Should -Match "\sdirs:"
+        $output | Should -Match "\sbase:"
+        Should -Invoke Read-Host -Times 2 -Exactly
     }
 }

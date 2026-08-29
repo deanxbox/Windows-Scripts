@@ -1,12 +1,10 @@
 # Apply-GPUPreferences.ps1
 # Pins apps to a selected GPU via Windows GPU Preferences registry.
-# Run any time to reapply. Edit gpu-prefs-apps.json to add or remove programs.
+# Run any time to reapply. Use ManageGPUApps.ps1 to add or remove programs.
 #
 # Usage:
-#   .\Apply-GPUPreferences.ps1                - detect GPUs, pick one, apply all apps
-#   .\Apply-GPUPreferences.ps1 -AddProgram    - jump straight to add-program wizard
-#   .\Apply-GPUPreferences.ps1 -RemoveProgram - jump straight to remove-program wizard
-#   .\Apply-GPUPreferences.ps1 -WhatIf        - preview registry/config writes
+#   .\Apply-GPUPreferences.ps1         - detect GPUs, pick one, apply all apps
+#   .\Apply-GPUPreferences.ps1 -WhatIf - preview registry writes
 
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSReviewUnusedParameter", "", Justification = "NoPause is consumed by a nested helper in this script.")]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSShouldProcess", "", Justification = "Nested helpers delegate confirmation to the outer advanced script.")]
@@ -15,8 +13,6 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute("PSUseSingularNouns", "", Justification = "Helper functions are private to this script and return collections.")]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [switch]$AddProgram,
-    [switch]$RemoveProgram,
     [switch]$NoPause
 )
 
@@ -35,13 +31,6 @@ function Load-Config {
         }
     }
     return [PSCustomObject]@{ apps = @() }
-}
-
-function Save-Config($config) {
-    if ($PSCmdlet.ShouldProcess($configPath, "Save GPU preferences app config")) {
-        $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $configPath -Encoding UTF8 -ErrorAction Stop
-        Write-Host "  Saved: $configPath" -ForegroundColor DarkGray
-    }
 }
 
 function Wait-BeforeExit {
@@ -235,132 +224,7 @@ function Select-AppScope($config) {
     }
 }
 
-# ── Add new program wizard ─────────────────────────────────────────────────────
-
-function Add-NewProgram($config, $gpuPref = $null) {
-    Write-Host ""
-    Write-Host "Add a New Program" -ForegroundColor Cyan
-    Write-Host "-----------------"
-
-    $name = (Read-Host "  Program name (blank to cancel)").Trim()
-    if (-not $name) {
-        Write-Host "  Cancelled." -ForegroundColor DarkGray
-        return $config
-    }
-
-    Write-Host ""
-    Write-Host "  Install type:"
-    Write-Host "  [1] Standard  - pins all .exe files found in a directory"
-    Write-Host "  [2] Updating  - pins all .exe files in base dir + versioned app-* subfolders"
-    $typeChoice = (Read-Host "  Choice [1/2]").Trim()
-
-    if ($typeChoice -eq '1') {
-        $dirs = @()
-        Write-Host "  Enter the directory (or directories) containing the app's exe files."
-        Write-Host "  Environment variables like %APPDATA% are supported. Leave blank when done."
-        while ($true) {
-            $d = (Read-Host "  Directory").Trim()
-            if (-not $d) { break }
-            $dirs += $d
-        }
-        if ($dirs.Count -eq 0) {
-            Write-Host "  No directories entered. Cancelled." -ForegroundColor Yellow
-            return $config
-        }
-        $newEntry = [PSCustomObject]@{ name = $name; dirs = $dirs }
-
-    } elseif ($typeChoice -eq '2') {
-        Write-Host "  Enter the base install folder (contains Update.exe and app-* subfolders)."
-        $base = (Read-Host "  Base folder (e.g. %LOCALAPPDATA%\Discord)").Trim()
-        if (-not $base) {
-            Write-Host "  Cancelled." -ForegroundColor Yellow
-            return $config
-        }
-        $newEntry = [PSCustomObject]@{ name = $name; base = $base }
-
-    } else {
-        Write-Host "  Invalid choice. Cancelled." -ForegroundColor Yellow
-        return $config
-    }
-
-    # Test-apply immediately so the user sees whether the paths resolve before committing
-    if ($gpuPref) {
-        Write-Host ""
-        $before = $script:total
-        Apply-AppEntry $newEntry $gpuPref
-        $pinned = $script:total - $before
-
-        if ($pinned -eq 0) {
-            Write-Host ""
-            Write-Host "  No executables were found - the paths may be wrong." -ForegroundColor Yellow
-            $doSave = (Read-Host "  Save to config anyway? [Y/N]").Trim()
-            if ($doSave -notin 'Y', 'y') {
-                Write-Host "  Discarded." -ForegroundColor DarkGray
-                return $config
-            }
-        }
-    }
-
-    $config.apps = @($config.apps) + $newEntry
-    Save-Config $config
-    Write-Host "  '$name' added to config." -ForegroundColor Green
-    return $config, $newEntry
-}
-
-# ── Remove program wizard ─────────────────────────────────────────────────────
-
-function Remove-Program($config) {
-    Write-Host ""
-    Write-Host "Remove a Program" -ForegroundColor Cyan
-    Write-Host "----------------"
-    Write-Host ""
-
-    $apps = @($config.apps)
-    if ($apps.Count -eq 0) {
-        Write-Host "  No programs in config." -ForegroundColor DarkGray
-        return $config
-    }
-
-    for ($i = 0; $i -lt $apps.Count; $i++) {
-        Write-Host ("  [{0}] {1}" -f ($i + 1), $apps[$i].name)
-    }
-    Write-Host "  [0] Cancel"
-    Write-Host ""
-
-    while ($true) {
-        $raw = (Read-Host "  Remove which?").Trim()
-        if ($raw -eq '0') {
-            Write-Host "  Cancelled." -ForegroundColor DarkGray
-            return $config
-        }
-        if ($raw -match '^\d+$') {
-            $idx = [int]$raw - 1
-            if ($idx -ge 0 -and $idx -lt $apps.Count) {
-                $name    = $apps[$idx].name
-                $confirm = (Read-Host "  Remove '$name'? [Y/N]").Trim()
-                if ($confirm -in 'Y', 'y') {
-                    $kept = [System.Collections.Generic.List[object]]::new()
-                    for ($j = 0; $j -lt $apps.Count; $j++) {
-                        if ($j -ne $idx) { $kept.Add($apps[$j]) }
-                    }
-                    $config.apps = $kept.ToArray()
-                    Save-Config $config
-                    Write-Host "  '$name' removed." -ForegroundColor Green
-                } else {
-                    Write-Host "  Cancelled." -ForegroundColor DarkGray
-                }
-                return $config
-            }
-        }
-        Write-Host "  Invalid choice." -ForegroundColor Yellow
-    }
-}
-
 # ── Main ───────────────────────────────────────────────────────────────────────
-
-if ($AddProgram -and $RemoveProgram) {
-    throw "Use either -AddProgram or -RemoveProgram, not both."
-}
 
 if (-not (Test-Path $regPath)) {
     if ($PSCmdlet.ShouldProcess($regPath, "Create Windows GPU preferences registry key")) {
@@ -369,21 +233,6 @@ if (-not (Test-Path $regPath)) {
 }
 
 $config = Load-Config
-
-if ($AddProgram) {
-    $gpuPref = Select-GPUPreference
-    Add-NewProgram $config $gpuPref | Out-Null
-    Write-Host ""
-    Wait-BeforeExit
-    exit
-}
-
-if ($RemoveProgram) {
-    Remove-Program $config | Out-Null
-    Write-Host ""
-    Wait-BeforeExit
-    exit
-}
 
 $gpuPref     = Select-GPUPreference
 $appsToApply = @(Select-AppScope $config)
@@ -394,20 +243,6 @@ foreach ($app in $appsToApply) {
 
 Write-Host ""
 Write-Host ("Done - {0} executable(s) pinned." -f $script:total) -ForegroundColor Green
-
-# Offer to manage the program list
-Write-Host ""
-Write-Host "Manage programs?  [A] Add  [R] Remove  [N] Nothing" -ForegroundColor DarkGray
-$manage = (Read-Host "Choice").Trim()
-
-if ($manage -in 'A', 'a') {
-    $result = Add-NewProgram $config $gpuPref   # applies & validates inside the wizard
-    $config = $result[0]
-    Write-Host ""
-    Write-Host ("Done - {0} total executable(s) pinned." -f $script:total) -ForegroundColor Green
-} elseif ($manage -in 'R', 'r') {
-    Remove-Program $config | Out-Null
-}
 
 Write-Host ""
 Wait-BeforeExit

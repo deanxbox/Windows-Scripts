@@ -28,6 +28,22 @@ function Get-PullResultKind {
     return "Updated"
 }
 
+function Get-ProgressStatus {
+    param(
+        [int]$Processed,
+        [int]$Total,
+        [int]$Failures,
+        [int]$Changes
+    )
+
+    $status = "$Processed of $Total directories"
+    $extras = @()
+    if ($Failures -gt 0) { $extras += "$Failures failed" }
+    if ($Changes -gt 0) { $extras += "$Changes updated" }
+    if ($extras.Count -gt 0) { $status += " ($($extras -join ', '))" }
+    return $status
+}
+
 function Write-SummaryList {
     param(
         [Parameter(Mandatory)]
@@ -81,6 +97,8 @@ $repos = [System.Collections.Generic.List[object]]::new()
 $nonRepos = [System.Collections.Generic.List[string]]::new()
 $results = [System.Collections.Generic.List[object]]::new()
 $processedCount = 0
+$liveFailures = 0
+$liveChanges = 0
 
 foreach ($directory in $directories) {
     if (Test-Path -LiteralPath (Join-Path $directory.FullName ".git")) {
@@ -92,7 +110,7 @@ foreach ($directory in $directories) {
         Write-Progress `
             -Id 1 `
             -Activity "Scanning and updating directories" `
-            -Status "$processedCount of $($directories.Count) directories" `
+            -Status (Get-ProgressStatus $processedCount $directories.Count $liveFailures $liveChanges) `
             -PercentComplete (($processedCount / [Math]::Max(1, $directories.Count)) * 100)
     }
 }
@@ -132,12 +150,17 @@ try {
                 $runningJobs.Add([PSCustomObject]@{ Job = $job; Name = $repo.Name })
             }
             catch {
-                $results.Add([PSCustomObject]@{
+                $result = [PSCustomObject]@{
                     Name    = $repo.Name
                     Output  = $_.Exception.Message
                     Success = $false
                     Files   = @()
-                })
+                }
+                $results.Add($result)
+                switch (Get-PullResultKind $result) {
+                    "Error" { $liveFailures++ }
+                    "Updated" { $liveChanges++ }
+                }
                 $processedCount++
             }
         }
@@ -151,23 +174,29 @@ try {
             [void]$runningJobs.Remove($entry)
 
             if ($received.Count -gt 0) {
-                $results.Add($received[-1])
+                $result = $received[-1]
             }
             else {
                 $message = if ($reason) { $reason.Message } else { "Job returned no result." }
-                $results.Add([PSCustomObject]@{
+                $result = [PSCustomObject]@{
                     Name    = $entry.Name
                     Output  = $message
                     Success = $false
                     Files   = @()
-                })
+                }
+            }
+
+            $results.Add($result)
+            switch (Get-PullResultKind $result) {
+                "Error" { $liveFailures++ }
+                "Updated" { $liveChanges++ }
             }
 
             $processedCount++
             Write-Progress `
                 -Id 1 `
                 -Activity "Scanning and updating directories" `
-                -Status "$processedCount of $($directories.Count) directories" `
+                -Status (Get-ProgressStatus $processedCount $directories.Count $liveFailures $liveChanges) `
                 -PercentComplete (($processedCount / [Math]::Max(1, $directories.Count)) * 100)
         }
 
