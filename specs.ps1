@@ -21,9 +21,32 @@ function Write-Header {
 }
 
 function Write-Row {
-    param([string]$Label, [string]$Value, [int]$Pad = 22)
+    param(
+        [string]$Label,
+        [string]$Value,
+        [int]$Pad = 22,
+        [ConsoleColor]$Color = [ConsoleColor]::White
+    )
     Write-Host "  $($Label.PadRight($Pad))" -NoNewline -ForegroundColor DarkGray
-    Write-Host $Value -ForegroundColor White
+    Write-Host $Value -ForegroundColor $Color
+}
+
+function Get-VendorColor {
+    param([string]$Name)
+
+    switch -Regex ($Name) {
+        '(?i)\b(AMD|Radeon)\b'                  { return [ConsoleColor]::Red }
+        '(?i)\b(Intel|Intel\(R\)|Arc)\b'        { return [ConsoleColor]::Blue }
+        '(?i)\b(NVIDIA|GeForce|RTX|GTX)\b'      { return [ConsoleColor]::Green }
+        '(?i)\bSamsung\b'                       { return [ConsoleColor]::Cyan }
+        '(?i)\b(Western Digital|WD|SanDisk)\b'  { return [ConsoleColor]::Magenta }
+        '(?i)\bSeagate\b'                       { return [ConsoleColor]::Yellow }
+        '(?i)\b(Crucial|Micron)\b'              { return [ConsoleColor]::DarkCyan }
+        '(?i)\bKingston\b'                      { return [ConsoleColor]::DarkYellow }
+        '(?i)\b(SK hynix|Hynix)\b'              { return [ConsoleColor]::DarkGreen }
+        '(?i)\bWindows\b'                       { return [ConsoleColor]::Cyan }
+        default                                 { return [ConsoleColor]::White }
+    }
 }
 
 function Get-MemoryTypeName {
@@ -80,7 +103,7 @@ Write-Host ("=" * $width) -ForegroundColor Cyan
 # -- CPU ---------------------------------------------------------------------
 Write-Header "CPU"
 $cpu = Get-CimInstance Win32_Processor
-Write-Row "Name"     $cpu.Name.Trim()
+Write-Row "Name"     $cpu.Name.Trim() -Color (Get-VendorColor "$($cpu.Name) $($cpu.Manufacturer)")
 Write-Row "Cores"    "$($cpu.NumberOfCores)C / $($cpu.NumberOfLogicalProcessors)T"
 Write-Row "Base Clock" "$($cpu.MaxClockSpeed) MHz"
 
@@ -103,7 +126,7 @@ Write-Row "Type"     $memoryType
 Write-Header "GPU(s)"
 $gpus = Get-CimInstance Win32_VideoController | Where-Object { -not (Test-GpuExcluded $_.Name) }
 foreach ($gpu in $gpus) {
-    Write-Row $gpu.Name "Driver $($gpu.DriverVersion)" 30
+    Write-Row $gpu.Name "Driver $($gpu.DriverVersion)" 30 -Color (Get-VendorColor $gpu.Name)
 }
 
 # -- Motherboard -------------------------------------------------------------
@@ -117,7 +140,7 @@ Write-Header "Storage"
 $disks = Get-CimInstance Win32_DiskDrive | Where-Object { $_.InterfaceType -ne "USB" }
 foreach ($disk in $disks) {
     $sizeGB = [Math]::Round($disk.Size / 1GB, 1)
-    Write-Row $disk.Model "${sizeGB} GB" 30
+    Write-Row $disk.Model "${sizeGB} GB" 30 -Color (Get-VendorColor $disk.Model)
 }
 $logicalDisks = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3"
 foreach ($logicalDisk in $logicalDisks) {
@@ -127,7 +150,7 @@ foreach ($logicalDisk in $logicalDisks) {
 # -- OS ----------------------------------------------------------------------
 Write-Header "OS"
 $os = Get-CimInstance Win32_OperatingSystem
-Write-Row "Name"    $os.Caption
+Write-Row "Name"    $os.Caption -Color (Get-VendorColor $os.Caption)
 Write-Row "Version" "$($os.Version) (Build $($os.BuildNumber))"
 Write-Row "Arch"    $os.OSArchitecture
 $uptime = (Get-Date) - $os.LastBootUpTime

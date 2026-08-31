@@ -1,0 +1,106 @@
+[
+  {
+    "Date": "2026-08-30",
+    "Currency": "GBP",
+    "Total": 2923.4955061575,
+    "Components": [
+      {
+        "Label": "CPU",
+        "Name": "AMD Ryzen 9 9900X 12-Core Processor",
+        "Price": 388.8682927425
+      },
+      {
+        "Label": "GPU 1",
+        "Name": "NVIDIA GeForce RTX 5070 Ti",
+        "Price": 878.09481099
+      },
+      {
+        "Label": "GPU 2",
+        "Name": "NVIDIA GeForce RTX 4060 Ti",
+        "Price": 533.860304985
+      },
+      {
+        "Label": "RAM",
+        "Name": "64GB DDR5 (4 x 16GB) - Micron Technology CP16G60C36U5B.M8D1, Micron Technology CP16G60C36U5B.M8D3",
+        "Price": 177.08886099
+      },
+      {
+        "Label": "Motherboard",
+        "Name": "Micro-Star International Co., Ltd. MAG X870 TOMAHAWK WIFI (MS-7E51)",
+        "Price": 177.08886099
+      },
+      {
+        "Label": "Storage 1",
+        "Name": "Samsung SSD 860 EVO 1TB (931.5GB)",
+        "Price": 265.63698099
+      },
+      {
+        "Label": "Storage 2",
+        "Name": "Fanxiang S880 1TB (931.5GB)",
+        "Price": 108.09511749
+      },
+      {
+        "Label": "Storage 3",
+        "Name": "Lexar SSD ARES PRO 1TB (953.9GB)",
+        "Price": 173.39935599
+      },
+      {
+        "Label": "Storage 4",
+        "Name": "Lexar SSD EQ790 4TB (3726GB)",
+        "Price": 221.36292099
+      }
+    ]
+  },
+  {
+    "Date": "2026-08-31",
+    "Currency": "GBP",
+    "Total": 2421.327526425,
+    "Components": [
+      {
+        "Label": "CPU",
+        "Name": "AMD Ryzen 9 9900X 12-Core Processor",
+        "Price": 372.43923801
+      },
+      {
+        "Label": "GPU 1",
+        "Name": "NVIDIA GeForce RTX 5070 Ti",
+        "Price": 878.50892751
+      },
+      {
+        "Label": "GPU 2",
+        "Name": "NVIDIA GeForce RTX 4060 Ti",
+        "Price": null
+      },
+      {
+        "Label": "RAM",
+        "Name": "64GB DDR5 (4 x 16GB) - Micron Technology CP16G60C36U5B.M8D1, Micron Technology CP16G60C36U5B.M8D3",
+        "Price": 177.17237751
+      },
+      {
+        "Label": "Motherboard",
+        "Name": "Micro-Star International Co., Ltd. MAG X870 TOMAHAWK WIFI (MS-7E51)",
+        "Price": 214.08482751
+      },
+      {
+        "Label": "Storage 1",
+        "Name": "Samsung SSD 860 EVO 1TB (931.5GB)",
+        "Price": 236.23229751
+      },
+      {
+        "Label": "Storage 2",
+        "Name": "Fanxiang S880 1TB (931.5GB)",
+        "Price": 210.39358251
+      },
+      {
+        "Label": "Storage 3",
+        "Name": "Lexar SSD ARES PRO 1TB (953.9GB)",
+        "Price": 155.323898355
+      },
+      {
+        "Label": "Storage 4",
+        "Name": "Lexar SSD EQ790 4TB (3726GB)",
+        "Price": 177.17237751
+      }
+    ]
+  }
+]
