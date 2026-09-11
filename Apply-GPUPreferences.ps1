@@ -19,6 +19,7 @@ param(
 $configPath   = Join-Path $PSScriptRoot "gpu-prefs-apps.json"
 $regPath      = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
 $script:total = 0
+$script:gpus = @()
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -57,13 +58,28 @@ function Get-AvailableGPUs {
     return $result.ToArray()
 }
 
+function Get-GPUPrefDisplayName($prefValue, $gpus) {
+    if (-not $prefValue) { return $null }
+    if ($prefValue -match 'SpecificAdapter=([0-9A-F&]+)') {
+        $adapterId = $Matches[1]
+        $match = $gpus | Where-Object { $_.AdapterId -eq $adapterId }
+        if ($match) { return $match.Name }
+        return "Unknown GPU"
+    } elseif ($prefValue -match 'GpuPreference=2') {
+        return "High Performance"
+    } elseif ($prefValue -match 'GpuPreference=1;?$') {
+        return "Power Saving"
+    }
+    return $null
+}
+
 function Select-GPUPreference {
-    $gpus = Get-AvailableGPUs
+    $script:gpus = Get-AvailableGPUs
 
     Write-Host ""
     Write-Host "Detected GPU(s):" -ForegroundColor Cyan
-    for ($i = 0; $i -lt $gpus.Count; $i++) {
-        Write-Host ("  [{0}] {1}" -f ($i + 1), $gpus[$i].Name)
+    for ($i = 0; $i -lt $script:gpus.Count; $i++) {
+        Write-Host ("  [{0}] {1}" -f ($i + 1), $script:gpus[$i].Name)
     }
     Write-Host "  [H] High Performance  (let Windows choose)"
     Write-Host "  [S] Power Saving"
@@ -73,17 +89,17 @@ function Select-GPUPreference {
         $raw = (Read-Host "Select GPU preference").Trim()
         if ($raw -match '^\d+$') {
             $idx = [int]$raw - 1
-            if ($idx -ge 0 -and $idx -lt $gpus.Count) {
-                $gpu = $gpus[$idx]
+            if ($idx -ge 0 -and $idx -lt $script:gpus.Count) {
+                $gpu = $script:gpus[$idx]
                 Write-Host ("  -> {0}" -f $gpu.Name) -ForegroundColor Green
-                return "SpecificAdapter=$($gpu.AdapterId);GpuPreference=1073741824;"
+                return [PSCustomObject]@{ Pref = "SpecificAdapter=$($gpu.AdapterId);GpuPreference=1073741824;"; Name = $gpu.Name }
             }
         } elseif ($raw -in 'H', 'h') {
             Write-Host "  -> High Performance" -ForegroundColor Green
-            return "GpuPreference=2;"
+            return [PSCustomObject]@{ Pref = "GpuPreference=2;"; Name = "High Performance" }
         } elseif ($raw -in 'S', 's') {
             Write-Host "  -> Power Saving" -ForegroundColor Green
-            return "GpuPreference=1;"
+            return [PSCustomObject]@{ Pref = "GpuPreference=1;"; Name = "Power Saving" }
         }
         Write-Host "  Invalid. Enter a number, H, or S." -ForegroundColor Yellow
     }
@@ -96,9 +112,15 @@ function Set-GPUPref($exePath, $gpuPref) {
     $dir  = [System.IO.Path]::GetDirectoryName($exePath)
     try {
         if ($PSCmdlet.ShouldProcess($exePath, "Set Windows GPU preference")) {
-            Set-ItemProperty -Path $regPath -Name $exePath -Value $gpuPref -Type String -ErrorAction Stop
-            Write-Host "  OK  $file"
-            Write-Host "      $dir"
+            $existing = (Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue).PSObject.Properties[$exePath].Value
+            $oldName  = Get-GPUPrefDisplayName $existing $script:gpus
+            Set-ItemProperty -Path $regPath -Name $exePath -Value $gpuPref.Pref -Type String -ErrorAction Stop
+            $changed = $oldName -and $oldName -ne $gpuPref.Name
+            $suffix = if ($changed) { "  [$oldName > $($gpuPref.Name)]" } else { "  [$($gpuPref.Name) (unchanged)]" }
+            $suffixColor = if ($changed) { 'Cyan' } else { 'DarkGray' }
+            Write-Host "  OK  $file" -ForegroundColor Green
+            Write-Host "      $dir" -NoNewline
+            Write-Host $suffix -ForegroundColor $suffixColor
             $script:total++
         }
     } catch {
@@ -113,13 +135,16 @@ function Find-Exes($dir) {
 
 function Apply-AppEntry($app, $gpuPref) {
     Write-Host ""
-    Write-Host "-- $($app.name) --"
+    Write-Host "-- $($app.name) --" -ForegroundColor Cyan
 
     # Standard: scan each listed directory for all *.exe files
     if ($app.dirs) {
         foreach ($d in @($app.dirs)) {
             $expanded = [System.Environment]::ExpandEnvironmentVariables($d)
-            if (Test-Path -LiteralPath $expanded -PathType Container) {
+            if (Test-Path -LiteralPath $expanded -PathType Leaf) {
+                # A direct exe path was given instead of a directory - accept it as-is.
+                Set-GPUPref $expanded $gpuPref
+            } elseif (Test-Path -LiteralPath $expanded -PathType Container) {
                 Find-Exes $expanded | ForEach-Object { Set-GPUPref $_.FullName $gpuPref }
             } else {
                 Write-Host "  --  (directory not found) $expanded" -ForegroundColor DarkGray
@@ -132,7 +157,8 @@ function Apply-AppEntry($app, $gpuPref) {
         $base = [System.Environment]::ExpandEnvironmentVariables($app.base)
         if (Test-Path -LiteralPath $base -PathType Container) {
             Find-Exes $base | ForEach-Object { Set-GPUPref $_.FullName $gpuPref }
-            Get-ChildItem -LiteralPath $base -Directory -Filter "app-*" -ErrorAction SilentlyContinue |
+            Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like 'app-*' -or $_.Name -match '^\d+(\.\d+)+$' } |
                 ForEach-Object {
                     Get-ChildItem -LiteralPath $_.FullName -Filter "*.exe" -File -Recurse -ErrorAction SilentlyContinue |
                         ForEach-Object { Set-GPUPref $_.FullName $gpuPref }

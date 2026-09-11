@@ -137,7 +137,10 @@ function Apply-AppEntry($app, $gpuPref) {
     if ($app.dirs) {
         foreach ($d in @($app.dirs)) {
             $expanded = [System.Environment]::ExpandEnvironmentVariables($d)
-            if (Test-Path -LiteralPath $expanded -PathType Container) {
+            if (Test-Path -LiteralPath $expanded -PathType Leaf) {
+                # A direct exe path was given instead of a directory - accept it as-is.
+                Set-GPUPref $expanded $gpuPref
+            } elseif (Test-Path -LiteralPath $expanded -PathType Container) {
                 Find-Exes $expanded | ForEach-Object { Set-GPUPref $_.FullName $gpuPref }
             } else {
                 Write-Host "  --  (directory not found) $expanded" -ForegroundColor DarkGray
@@ -150,7 +153,8 @@ function Apply-AppEntry($app, $gpuPref) {
         $base = [System.Environment]::ExpandEnvironmentVariables($app.base)
         if (Test-Path -LiteralPath $base -PathType Container) {
             Find-Exes $base | ForEach-Object { Set-GPUPref $_.FullName $gpuPref }
-            Get-ChildItem -LiteralPath $base -Directory -Filter "app-*" -ErrorAction SilentlyContinue |
+            Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like 'app-*' -or $_.Name -match '^\d+(\.\d+)+$' } |
                 ForEach-Object {
                     Get-ChildItem -LiteralPath $_.FullName -Filter "*.exe" -File -Recurse -ErrorAction SilentlyContinue |
                         ForEach-Object { Set-GPUPref $_.FullName $gpuPref }
@@ -182,7 +186,7 @@ function Add-NewProgram($config, $gpuPref = $null) {
 
     if ($typeChoice -eq '1') {
         $dirs = @()
-        Write-Host "  Enter the directory (or directories) containing the app's exe files."
+        Write-Host "  Enter the directory (or directories) containing the app's exe files, or a direct .exe path."
         Write-Host "  Environment variables like %APPDATA% are supported. Leave blank when done."
         while ($true) {
             $d = (Read-Host "  Directory").Trim()

@@ -93,70 +93,83 @@ function Test-GpuExcluded {
 
 function Get-PriceCurrency {
     $region = [System.Globalization.RegionInfo]::CurrentRegion
-    $currencyCode = $region.ISOCurrencySymbol
-    $currencySymbol = (Get-Culture).NumberFormat.CurrencySymbol
-    $rate = [decimal]1
-    $exchangeRateAvailable = $true
-
-    if ($currencyCode -ne "USD") {
-        try {
-            $rates = Invoke-RestMethod -Uri "https://open.er-api.com/v6/latest/USD" -TimeoutSec 8 -ErrorAction Stop
-            $rateProperty = $rates.rates.PSObject.Properties[$currencyCode]
-            if ($rates.result -ne "success" -or $null -eq $rateProperty -or [decimal]$rateProperty.Value -le 0) {
-                throw "No exchange rate was returned for $currencyCode."
-            }
-            $rate = [decimal]$rateProperty.Value
-        } catch {
-            $currencyCode = "USD"
-            $currencySymbol = '$'
-            $exchangeRateAvailable = $false
-        }
-    }
 
     [pscustomobject]@{
-        Code                  = $currencyCode
-        Symbol                = $currencySymbol
-        UsdRate               = $rate
-        ExchangeRateAvailable = $exchangeRateAvailable
+        CountryCode = $region.TwoLetterISORegionName
+        Code        = $region.ISOCurrencySymbol
+        Symbol      = (Get-Culture).NumberFormat.CurrencySymbol
     }
 }
 
-# Retailer set modeled on the storefronts PCPartPicker's US price-comparison
-# tracks (Newegg, Amazon, Best Buy, B&H Photo, Adorama). Each entry needs a
-# browser-like User-Agent/Accept-Language or the retailer blocks the request
-# with 403; even so a source can still fail/time out, which is handled
-# per-source so it never blocks the others.
 $browserHeaders = @{
-    "User-Agent"      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    "Accept-Language" = "en-US,en;q=0.9"
+    "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 }
-$priceSources = @(
-    [pscustomobject]@{
-        Name       = "Newegg"
-        Uri        = "https://www.newegg.com/p/pl?d={0}"
-        PriceRegex = '<li class="price-current"[^>]*>.*?\$\s*<strong>(?<price>[\d,]+)</strong><sup>(?<fraction>\.\d{2})</sup>'
-    },
-    [pscustomobject]@{
-        Name       = "Amazon"
-        Uri        = "https://www.amazon.com/s?k={0}"
-        PriceRegex = 'class="a-offscreen">\$(?<price>[\d,]+\.\d{2})<'
-    },
-    [pscustomobject]@{
-        Name       = "B&H Photo"
-        Uri        = "https://www.bhphotovideo.com/c/search?q={0}"
-        PriceRegex = '"price"\s*:\s*"?\$?(?<price>[\d,]+\.\d{2})"?'
-    },
-    [pscustomobject]@{
-        Name       = "Best Buy"
-        Uri        = "https://www.bestbuy.com/site/searchpage.jsp?st={0}"
-        PriceRegex = 'data-testid="[^"]*price[^"]*"[^>]*>\s*\$(?<price>[\d,]+(?:\.\d{2})?)'
-    },
-    [pscustomobject]@{
-        Name       = "Adorama"
-        Uri        = "https://www.adorama.com/l/?searchinfo={0}"
-        PriceRegex = 'class="price"[^>]*>\s*\$(?<price>[\d,]+\.\d{2})'
-    }
-)
+
+# Each market uses its own storefront, number format, and local-currency price.
+$regionalPriceSources = @{
+    US = @(
+        [pscustomobject]@{
+            Name           = "Newegg"
+            Uri            = "https://www.newegg.com/p/pl?d={0}"
+            PriceRegex     = '<li class="price-current"[^>]*>.*?\$\s*<strong>(?<price>[\d,]+)</strong><sup>(?<fraction>\.\d{2})</sup>'
+            Culture        = "en-US"
+            AcceptLanguage = "en-US,en;q=0.9"
+        },
+        [pscustomobject]@{
+            Name           = "Amazon US"
+            Uri            = "https://www.amazon.com/s?k={0}"
+            PriceRegex     = 'class="a-offscreen">\$(?<price>[\d,]+\.\d{2})<'
+            Culture        = "en-US"
+            AcceptLanguage = "en-US,en;q=0.9"
+        }
+    )
+    GB = @(
+        [pscustomobject]@{
+            Name           = "Laptops Direct"
+            Uri            = "https://www.laptopsdirect.co.uk/search?w={0}"
+            PriceRegex     = '"price":\s*(?<price>[\d.]+),\s*"priceCurrency":\s*"GBP"'
+            Culture        = "en-GB"
+            AcceptLanguage = "en-GB,en;q=0.9"
+        }
+    )
+    CA = @(
+        [pscustomobject]@{
+            Name           = "Amazon Canada"
+            Uri            = "https://www.amazon.ca/s?k={0}"
+            PriceRegex     = 'class="a-offscreen">(?:CDN\s*)?\$(?<price>[\d,]+\.\d{2})<'
+            Culture        = "en-CA"
+            AcceptLanguage = "en-CA,en;q=0.9"
+        }
+    )
+    AU = @(
+        [pscustomobject]@{
+            Name           = "Amazon Australia"
+            Uri            = "https://www.amazon.com.au/s?k={0}"
+            PriceRegex     = 'class="a-offscreen">\$(?<price>[\d,]+\.\d{2})<'
+            Culture        = "en-AU"
+            AcceptLanguage = "en-AU,en;q=0.9"
+        }
+    )
+    DE = @(
+        [pscustomobject]@{
+            Name           = "Amazon Germany"
+            Uri            = "https://www.amazon.de/s?k={0}"
+            PriceRegex     = 'class="a-offscreen">(?<price>[\d.]+,\d{2})\s*(?:\u20AC|EUR|&euro;)<'
+            Culture        = "de-DE"
+            AcceptLanguage = "de-DE,de;q=0.9,en;q=0.7"
+        }
+    )
+    IN = @(
+        [pscustomobject]@{
+            Name           = "Amazon India"
+            Uri            = "https://www.amazon.in/s?k={0}"
+            PriceRegex     = 'class="a-offscreen">(?:\u20B9|&#x20B9;)(?<price>[\d,]+(?:\.\d{2})?)<'
+            Culture        = "en-IN"
+            AcceptLanguage = "en-IN,en;q=0.9,hi;q=0.7"
+        }
+    )
+}
+$priceSources = $regionalPriceSources.US
 
 function Write-TransientStatus {
     param([string]$Text)
@@ -186,8 +199,10 @@ function Get-SingleSourcePrice {
     param($Source, [string]$Query, [hashtable]$Headers)
 
     try {
-        $uri = $Source.Uri -f [Uri]::EscapeDataString($Query)
-        $content = (Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 8 -Headers $Headers -ErrorAction Stop).Content
+        $uri = $Source.Uri -f [Uri]::EscapeDataString($Query).Replace('%20', '+')
+        $requestHeaders = $Headers.Clone()
+        $requestHeaders["Accept-Language"] = $Source.AcceptLanguage
+        $content = (Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 15 -Headers $requestHeaders -ErrorAction Stop).Content
 
         $priceMatches = [regex]::Matches(
             $content,
@@ -201,7 +216,11 @@ function Get-SingleSourcePrice {
         # of the actual product's going price than a single first match.
         $sample = [decimal[]]($priceMatches | Select-Object -First 8 | ForEach-Object {
                 $fraction = if ($_.Groups["fraction"].Success) { $_.Groups["fraction"].Value } else { "" }
-                [decimal]::Parse($_.Groups["price"].Value.Replace(",", "") + $fraction, [Globalization.CultureInfo]::InvariantCulture)
+                [decimal]::Parse(
+                    $_.Groups["price"].Value + $fraction,
+                    [Globalization.NumberStyles]::Number,
+                    [Globalization.CultureInfo]::GetCultureInfo($Source.Culture)
+                )
             } | Sort-Object)
         if ($sample.Count -eq 0) { return $null }
         $mid = [Math]::Floor(($sample.Count - 1) / 2)
@@ -228,8 +247,13 @@ function Get-RetailerPrice {
         $results = $priceSources | ForEach-Object -ThrottleLimit ([Math]::Max($priceSources.Count, 1)) -Parallel {
             $source = $_
             try {
-                $uri = $source.Uri -f [Uri]::EscapeDataString($using:Query)
-                $content = (Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 8 -Headers $using:browserHeaders -ErrorAction Stop).Content
+                $uri = $source.Uri -f [Uri]::EscapeDataString($using:Query).Replace('%20', '+')
+                $baseHeaders = $using:browserHeaders
+                $requestHeaders = @{
+                    "User-Agent"      = $baseHeaders["User-Agent"]
+                    "Accept-Language" = $source.AcceptLanguage
+                }
+                $content = (Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 15 -Headers $requestHeaders -ErrorAction Stop).Content
                 $priceMatches = [regex]::Matches(
                     $content,
                     $source.PriceRegex,
@@ -239,7 +263,11 @@ function Get-RetailerPrice {
 
                 $sample = [decimal[]]($priceMatches | Select-Object -First 8 | ForEach-Object {
                         $fraction = if ($_.Groups["fraction"].Success) { $_.Groups["fraction"].Value } else { "" }
-                        [decimal]::Parse($_.Groups["price"].Value.Replace(",", "") + $fraction, [Globalization.CultureInfo]::InvariantCulture)
+                        [decimal]::Parse(
+                            $_.Groups["price"].Value + $fraction,
+                            [Globalization.NumberStyles]::Number,
+                            [Globalization.CultureInfo]::GetCultureInfo($source.Culture)
+                        )
                     } | Sort-Object)
                 if ($sample.Count -eq 0) { return }
                 $mid = [Math]::Floor(($sample.Count - 1) / 2)
@@ -287,6 +315,23 @@ function Format-Price {
 
     if ($null -eq $Price) { return "N/A" }
     return $CurrencySymbol + ([decimal]$Price).ToString("N2", [Globalization.CultureInfo]::InvariantCulture) + " $CurrencyCode"
+}
+
+function ConvertFrom-ComparisonDate {
+    param([string]$DateText)
+
+    [datetime]$parsedDate = [datetime]::MinValue
+    [string[]]$formats = @("dd/MM/yyyy", "d/M/yyyy", "d/MM/yyyy", "dd/M/yyyy")
+    if ([datetime]::TryParseExact(
+            $DateText,
+            $formats,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None,
+            [ref]$parsedDate
+        )) {
+        return $parsedDate
+    }
+    return $null
 }
 
 function Get-SpecificGpuModel {
@@ -348,10 +393,11 @@ $ramQuery = if ($ramModels.Count -gt 0) {
 
 $components = @(
     [pscustomobject]@{
-        Label = "CPU"
-        Name  = $cpu.Name.Trim()
-        Query = $cpu.Name.Trim()
-        Color = Get-VendorColor "$($cpu.Name) $($cpu.Manufacturer)"
+        Label      = "CPU"
+        Name       = $cpu.Name.Trim()
+        Query      = $cpu.Name.Trim()
+        Color      = Get-VendorColor "$($cpu.Name) $($cpu.Manufacturer)"
+        Multiplier = 1
     }
 )
 
@@ -368,24 +414,27 @@ foreach ($gpu in $gpus) {
     $gpuDisplayName = if ($gpuModel) { "$($gpu.Name) ($gpuModel)" } else { $gpu.Name }
     $gpuQuery = if ($gpuModel) { "$($gpu.Name) $gpuModel" } else { $gpu.Name }
     $components += [pscustomobject]@{
-        Label = "GPU $gpuNumber"
-        Name  = $gpuDisplayName
-        Query = $gpuQuery
-        Color = Get-VendorColor $gpu.Name
+        Label      = "GPU $gpuNumber"
+        Name       = $gpuDisplayName
+        Query      = $gpuQuery
+        Color      = Get-VendorColor $gpu.Name
+        Multiplier = 1
     }
 }
 
 $components += [pscustomobject]@{
-    Label = "RAM"
-    Name  = $ramName
-    Query = $ramQuery
-    Color = Get-VendorColor ($ramModels -join " ")
+    Label      = "RAM"
+    Name       = $ramName
+    Query      = $ramQuery
+    Color      = Get-VendorColor ($ramModels -join " ")
+    Multiplier = [Math]::Max($sticks, 1)
 }
 $components += [pscustomobject]@{
-    Label = "Motherboard"
-    Name  = "$($mb.Manufacturer) $($mb.Product)".Trim()
-    Query = "$($mb.Manufacturer) $($mb.Product) motherboard".Trim()
-    Color = Get-VendorColor $mb.Manufacturer
+    Label      = "Motherboard"
+    Name       = "$($mb.Manufacturer) $($mb.Product)".Trim()
+    Query      = "$($mb.Manufacturer) $($mb.Product) motherboard".Trim()
+    Color      = Get-VendorColor $mb.Manufacturer
+    Multiplier = 1
 }
 
 $diskNumber = 0
@@ -393,23 +442,30 @@ foreach ($disk in $disks) {
     $diskNumber++
     $sizeGB = [Math]::Round($disk.Size / 1GB, 1)
     $components += [pscustomobject]@{
-        Label = "Storage $diskNumber"
-        Name  = "$($disk.Model) (${sizeGB}GB)"
-        Query = "$($disk.Model) internal drive"
-        Color = Get-VendorColor $disk.Model
+        Label      = "Storage $diskNumber"
+        Name       = "$($disk.Model) (${sizeGB}GB)"
+        Query      = "$($disk.Model) internal drive"
+        Color      = Get-VendorColor $disk.Model
+        Multiplier = 1
     }
 }
 
-Write-TransientStatus "Detecting local currency and exchange rate..."
+Write-TransientStatus "Selecting regional storefronts..."
 $currency = Get-PriceCurrency
 Clear-TransientStatus
-$sourceNames = $priceSources.Name -join ", "
-$currencyNote = if (-not $currency.ExchangeRateAvailable) {
-    "(USD $([char]0x2014) exchange rate unavailable)"
-} elseif ($currency.Code -eq "USD") {
-    "USD (local currency; conversion not required)"
+$usingUsdFallback = -not $regionalPriceSources.ContainsKey($currency.CountryCode)
+if ($usingUsdFallback) {
+    $priceSources = $regionalPriceSources.US
+    $currency.Code = "USD"
+    $currency.Symbol = '$'
 } else {
-    "$($currency.Code) (converted from scraped USD prices)"
+    $priceSources = $regionalPriceSources[$currency.CountryCode]
+}
+$sourceNames = $priceSources.Name -join ", "
+$currencyNote = if ($usingUsdFallback) {
+    "USD fallback (no regional storefront configured for $($currency.CountryCode); no conversion)"
+} else {
+    "$($currency.Code) ($($currency.CountryCode) regional storefront prices; no conversion)"
 }
 
 Write-Header "COMPONENT PRICES ($($currency.Code))"
@@ -426,14 +482,28 @@ $priceRecords = @()
 foreach ($component in $components) {
     $prices = @(Get-RetailerPrice -Query $component.Query -Label $component.Label)
     $price = if ($prices.Count -gt 0) {
-        [decimal](($prices | Measure-Object -Property Price -Average).Average) * $currency.UsdRate
+        [decimal](($prices | Measure-Object -Property Price -Average).Average) * $component.Multiplier
     } else {
         $null
     }
     $priceText = Format-Price $price -CurrencySymbol $currency.Symbol -CurrencyCode $currency.Code
-    $sourcesText = if ($prices.Count -gt 0) { " avg ($($prices.Source -join ', '))" } else { "" }
+    $sourcesText = if ($prices.Count -gt 0) {
+        if ($component.Label -eq "RAM") {
+            " avg per stick ($($prices.Source -join ', ')) x$($component.Multiplier) sticks"
+        } else {
+            " avg ($($prices.Source -join ', '))"
+        }
+    } else {
+        ""
+    }
+    $sourceLinks = $priceSources | ForEach-Object {
+        "$($_.Name) ($($_.Uri -f [Uri]::EscapeDataString($component.Query).Replace('%20', '+')))"
+    }
+    $sourceLinksText = $sourceLinks -join ", "
     Write-Row $component.Label "$($component.Name)  [$priceText$sourcesText]" -Color $component.Color
+    Write-Host "    Sources: $sourceLinksText" -ForegroundColor DarkGray
     $summaryLines += "$($component.Label): $($component.Name) - $priceText$sourcesText"
+    $summaryLines += "  Sources: $sourceLinksText"
 
     if ($null -eq $price) {
         $unpriced += "$($component.Label): $($component.Name)"
@@ -512,10 +582,8 @@ while ($true) {
             break
         }
 
-        $parsedDate = $null
-        try {
-            $parsedDate = [datetime]::ParseExact($dateInput.Trim(), "dd/MM/yyyy", $null)
-        } catch {
+        $parsedDate = ConvertFrom-ComparisonDate $dateInput.Trim()
+        if ($null -eq $parsedDate) {
             Write-Host "  Invalid date format. Please use DD/MM/YYYY." -ForegroundColor Yellow
             continue
         }

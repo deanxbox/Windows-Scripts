@@ -1,40 +1,50 @@
-﻿{
-    "apps":  [
-                 {
-                     "name":  "Brave Browser",
-                     "dirs":  [
-                                  "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application"
-                              ]
-                 },
-                 {
-                     "name":  "Discord",
-                     "base":  "%LOCALAPPDATA%\\Discord"
-                 },
-                 {
-                     "name":  "Medal",
-                     "base":  "%LOCALAPPDATA%\\Medal"
-                 },
-                 {
-                     "name":  "Spotify",
-                     "dirs":  [
-                                  "%APPDATA%\\Spotify"
-                              ]
-                 },
-                 {
-                     "name":  "Wallpaper Engine",
-                     "base":  "C:\\Program Files (x86)\\Steam\\steamapps\\common\\wallpaper_engine"
-                 },
-                 {
-                     "name":  "Seanime",
-                     "dirs":  [
-                                  "C:\\Program Files\\Seanime Denshi"
-                              ]
-                 },
-                 {
-                     "name":  "Stremio",
-                     "dirs":  [
-                                  "C:\\Users\\deanm\\AppData\\Local\\Programs\\Stremio"
-                              ]
-                 }
-             ]
+{
+  "apps": [
+    {
+      "name": "Brave Browser",
+      "dirs": [
+        "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application"
+      ]
+    },
+    {
+      "name": "Discord",
+      "base": "%LOCALAPPDATA%\\Discord"
+    },
+    {
+      "name": "Medal",
+      "base": "%LOCALAPPDATA%\\Medal"
+    },
+    {
+      "name": "Spotify",
+      "dirs": [
+        "%APPDATA%\\Spotify"
+      ]
+    },
+    {
+      "name": "Wallpaper Engine",
+      "base": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\wallpaper_engine"
+    },
+    {
+      "name": "Seanime",
+      "dirs": [
+        "C:\\Program Files\\Seanime Denshi"
+      ]
+    },
+    {
+      "name": "Stremio",
+      "dirs": [
+        "C:\\Users\\deanm\\AppData\\Local\\Programs\\Stremio"
+      ]
+    },
+    {
+      "name": "Explorer",
+      "dirs": [
+        "C:\\Windows\\explorer.exe"
+      ]
+    },
+    {
+      "name": "Web2View",
+      "base": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application"
+    }
+  ]
 }
