@@ -17,6 +17,21 @@ npm install
 
 ## Scripts
 
+### `Generate-Mc-Server.ps1`
+
+Interactively installs a Vanilla, Fabric, NeoForge, Forge, or Quilt Minecraft server, copies local mods, writes server settings/EULA/startup files, checks likely mod incompatibilities, and configures detected Chunky/BlueMap/squaremap pre-generation.
+
+```powershell
+.\Generate-Mc-Server.ps1
+.\Generate-Mc-Server.ps1 -Reconfigure -ServerPath C:\Servers\MyServer
+```
+
+Minecraft releases are shown by default; snapshots are opt-in and may not have a compatible loader. Arrow-key menus show a compact scrolling window of up to 10 items, with the newest item selected by default. Use ↑/↓ to navigate and Space to select (Enter also confirms single selections); multi-select menus use Space to toggle and Enter to confirm. If the interactive menu is unavailable, the numbered fallback accepts an empty Enter as item 1. New servers are created from a folder name beneath the current invocation directory; `-Reconfigure -ServerPath` continues to accept an explicit existing path. Vanilla downloads Mojang's server jar directly and skips mod compatibility and map-mod scanning. Forge and NeoForge automation is limited to Minecraft 1.17+ and its generated `run.sh`/argfile layout. `-Reconfigure` skips installation and only asks for RAM before regenerating `start.sh`. Chunky shape, radius, and center are configured independently for each selected dimension, then selected dimensions generate sequentially in overworld → nether → end order; the script enforces Chunky's one-second, non-silent progress logging to avoid false idle timeouts during active generation. When BlueMap or squaremap is detected, the server boots once to generate their configuration before temporary render-thread overrides are applied; BlueMap's required `accept-download` setting is enabled permanently, while only render-thread settings are restored after the second headless pre-generation run. Map-render completion is reported when detected, and a five-second heartbeat shows elapsed time and time since the last log activity during quiet render periods. BlueMap and squaremap render continuously in the background and have no reliably detectable one-time "finished" signal, so their completion does not gate the pre-generation run; when Chunky tasks are also configured, pre-generation finishes as soon as all Chunky tasks complete. If only BlueMap/squaremap are present (no Chunky tasks), pre-generation instead ends via the idle-timeout fallback after genuine log inactivity, and the script prints a warning explaining why.
+
+Requires Java on `PATH`; server icons additionally require `ffmpeg`.
+
+---
+
 ### `ConvertTo-Toon.ps1`
 
 Converts JSON files to the token-efficient [TOON format](https://toonformat.dev) by using the official `@toon-format/cli` package.
