@@ -17,6 +17,20 @@ npm install
 
 ## Scripts
 
+### `Install-Mod.ps1`
+
+Installs a jar from a Minecraft mod project's `build/libs` into a Prism Launcher instance. The first run detects Prism, shows up to five instances at a time in an arrow-key/Space menu, and saves the selected instance in `%LOCALAPPDATA%\Install-Mod\state.json` for later runs. Source, development, deobfuscated, and Javadoc jars are ignored when a primary artifact is available.
+
+```powershell
+.\Install-Mod.ps1
+.\Install-Mod.ps1 -Instance "My Fabric Instance" -Artifact .\fabric\build\libs\example.jar
+.\Install-Mod.ps1 -ProjectPath C:\src\example -PrismPath "$env:APPDATA\PrismLauncher" -WhatIf
+```
+
+For automation, provide `-PrismPath`, `-Instance`, and `-Artifact` when discovery would be ambiguous. Use `-NoPersist` to leave the saved default unchanged.
+
+---
+
 ### `Generate-Mc-Server.ps1`
 
 Interactively installs a Vanilla, Fabric, NeoForge, Forge, or Quilt Minecraft server, copies local mods, writes server settings/EULA/startup files, checks likely mod incompatibilities, and configures detected Chunky/BlueMap/squaremap pre-generation.

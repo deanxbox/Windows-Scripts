@@ -6,7 +6,7 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 [OutputType([pscustomobject])]
 param(
-    [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+    [Parameter(Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
     [Alias("FullName", "LiteralPath")]
     [ValidateNotNullOrEmpty()]
     [string[]]$Path,
@@ -16,8 +16,9 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$Name,
 
+    [ValidateNotNullOrEmpty()]
     [ValidateSet("zip", "7z", "zstd", "tar.zst", "tar.gz", "tar.xz")]
-    [string]$Format = "zip",
+    [string[]]$Format = "zip",
 
     [ValidateSet("Fastest", "Fast", "Normal", "Max", "Ultra")]
     [string]$Level = "Normal",
@@ -28,6 +29,252 @@ param(
 
 begin {
     $inputPaths = [System.Collections.Generic.List[string]]::new()
+
+    function Test-InteractiveHost {
+        return [Environment]::UserInteractive -and
+            $null -ne $Host.UI -and
+            -not [Console]::IsInputRedirected -and
+            -not ([Environment]::GetCommandLineArgs() -contains "-NonInteractive")
+    }
+
+    function Get-MenuSelectionState {
+        param(
+            [Parameter(Mandatory)][ValidateRange(0, [int]::MaxValue)][int]$CursorIndex,
+            [Parameter(Mandatory)][ValidateRange(1, [int]::MaxValue)][int]$ItemCount,
+            [Parameter(Mandatory)][ConsoleKey]$Key,
+            [AllowEmptyCollection()][int[]]$SelectedIndex = @(),
+            [switch]$Multiple
+        )
+
+        $CursorIndex = [Math]::Min($CursorIndex, $ItemCount - 1)
+        $selected = [System.Collections.Generic.HashSet[int]]::new()
+        foreach ($index in $SelectedIndex) {
+            if ($index -ge 0 -and $index -lt $ItemCount) {
+                $null = $selected.Add($index)
+            }
+        }
+
+        switch ($Key) {
+            "UpArrow" { $CursorIndex = [Math]::Max(0, $CursorIndex - 1) }
+            "DownArrow" { $CursorIndex = [Math]::Min($ItemCount - 1, $CursorIndex + 1) }
+            "Spacebar" {
+                if ($Multiple -and -not $selected.Remove($CursorIndex)) {
+                    $null = $selected.Add($CursorIndex)
+                }
+            }
+        }
+
+        if (-not $Multiple) {
+            $selected.Clear()
+            $null = $selected.Add($CursorIndex)
+        }
+
+        return [pscustomobject]@{
+            CursorIndex   = $CursorIndex
+            SelectedIndex = @($selected | Sort-Object)
+            Confirmed     = if ($Multiple) {
+                $Key -eq [ConsoleKey]::Enter -and $selected.Count -gt 0
+            }
+            else {
+                $Key -in [ConsoleKey]::Spacebar, [ConsoleKey]::Enter
+            }
+        }
+    }
+
+    function Read-NumberedMenuItem {
+        param(
+            [Parameter(Mandatory)][string]$Prompt,
+            [Parameter(Mandatory)][ValidateNotNullOrEmpty()][object[]]$Item,
+            [scriptblock]$Label = { param($Value) [string]$Value },
+            [switch]$Multiple,
+            [AllowEmptyCollection()][int[]]$DefaultIndex = @()
+        )
+
+        $defaultIndexes = @($DefaultIndex |
+            Where-Object { $_ -ge 0 -and $_ -lt $Item.Count } |
+            Select-Object -Unique)
+        if (-not $Multiple -and $defaultIndexes.Count -eq 0) {
+            $defaultIndexes = @(0)
+        }
+
+        for ($index = 0; $index -lt $Item.Count; $index++) {
+            Write-Host ("  [{0}] {1}" -f ($index + 1), (& $Label $Item[$index]))
+        }
+
+        while ($true) {
+            $suffix = if ($Multiple) {
+                " (comma-separated, blank for defaults)"
+            }
+            else {
+                " [Default: $($defaultIndexes[0] + 1)]"
+            }
+            $choice = (Read-Host "$Prompt$suffix").Trim()
+            if ($Multiple) {
+                if (-not $choice -and $defaultIndexes.Count -gt 0) {
+                    $selectedItems = @($defaultIndexes | ForEach-Object { $Item[$_] })
+                    Write-Host "Selected: $(@($selectedItems | ForEach-Object { & $Label $_ }) -join ', ')" `
+                        -ForegroundColor Green
+                    return $selectedItems
+                }
+
+                $parts = @($choice -split '\s*,\s*')
+                $selectedIndexes = @($parts | ForEach-Object {
+                    $selected = 0
+                    if ([int]::TryParse($_, [ref]$selected) -and
+                        $selected -ge 1 -and
+                        $selected -le $Item.Count) {
+                        $selected - 1
+                    }
+                })
+                if ($selectedIndexes.Count -eq $parts.Count) {
+                    $selectedItems = @($selectedIndexes |
+                        Select-Object -Unique |
+                        ForEach-Object { $Item[$_] })
+                    Write-Host "Selected: $(@($selectedItems | ForEach-Object { & $Label $_ }) -join ', ')" `
+                        -ForegroundColor Green
+                    return $selectedItems
+                }
+
+                Write-Host "Enter one or more listed numbers." -ForegroundColor Yellow
+                continue
+            }
+
+            if (-not $choice) {
+                Write-Host "Selected: $(& $Label $Item[$defaultIndexes[0]])" -ForegroundColor Green
+                return $Item[$defaultIndexes[0]]
+            }
+
+            $selected = 0
+            if ([int]::TryParse($choice, [ref]$selected) -and
+                $selected -ge 1 -and
+                $selected -le $Item.Count) {
+                Write-Host "Selected: $(& $Label $Item[$selected - 1])" -ForegroundColor Green
+                return $Item[$selected - 1]
+            }
+
+            $exact = @($Item | Where-Object { (& $Label $_) -eq $choice })
+            if ($exact.Count -eq 1) {
+                Write-Host "Selected: $(& $Label $exact[0])" -ForegroundColor Green
+                return $exact[0]
+            }
+            Write-Host "Enter a listed number or exact value." -ForegroundColor Yellow
+        }
+    }
+
+    function Get-MenuTop {
+        param(
+            [Parameter(Mandatory)][ValidateRange(0, [int]::MaxValue)][int]$CursorTop,
+            [Parameter(Mandatory)][ValidateRange(1, [int]::MaxValue)][int]$WindowSize
+        )
+
+        return [Math]::Max(0, $CursorTop - $WindowSize)
+    }
+
+    function Select-MenuItem {
+        param(
+            [Parameter(Mandatory)][string]$Prompt,
+            [Parameter(Mandatory)][ValidateNotNullOrEmpty()][object[]]$Item,
+            [scriptblock]$Label = { param($Value) [string]$Value },
+            [switch]$Multiple,
+            [AllowEmptyCollection()][int[]]$DefaultIndex = @()
+        )
+
+        $defaultIndexes = @($DefaultIndex |
+            Where-Object { $_ -ge 0 -and $_ -lt $Item.Count } |
+            Select-Object -Unique)
+        if (-not $Multiple -and $defaultIndexes.Count -eq 0) {
+            $defaultIndexes = @(0)
+        }
+
+        if (-not (Test-InteractiveHost)) {
+            return Read-NumberedMenuItem -Prompt $Prompt -Item $Item -Label $Label `
+                -Multiple:$Multiple -DefaultIndex $defaultIndexes
+        }
+
+        try {
+            $windowSize = [Math]::Min(10, $Item.Count)
+            $cursorIndex = if ($defaultIndexes.Count -gt 0) { $defaultIndexes[0] } else { 0 }
+            $selectedIndex = $defaultIndexes
+            $originalCursorVisible = [Console]::CursorVisible
+            [Console]::CursorVisible = $false
+            $controls = if ($Multiple) {
+                "↑/↓ navigate, Space to toggle, Enter to confirm"
+            }
+            else {
+                "↑/↓ navigate, Space to select"
+            }
+            Write-Host "$Prompt ($controls)"
+            for ($row = 0; $row -lt $windowSize; $row++) {
+                Write-Host ""
+            }
+            $menuTop = Get-MenuTop -CursorTop ([Console]::CursorTop) -WindowSize $windowSize
+
+            while ($true) {
+                $windowStart = [Math]::Min(
+                    [Math]::Max(0, $cursorIndex - [Math]::Floor($windowSize / 2)),
+                    [Math]::Max(0, $Item.Count - $windowSize)
+                )
+                $width = [Math]::Max(1, [Console]::BufferWidth - 1)
+                for ($row = 0; $row -lt $windowSize; $row++) {
+                    $itemIndex = $windowStart + $row
+                    $cursorMarker = if ($itemIndex -eq $cursorIndex) { ">" } else { " " }
+                    $selectionMarker = if ($Multiple) {
+                        if ($selectedIndex -contains $itemIndex) { "[x]" } else { "[ ]" }
+                    }
+                    else {
+                        " "
+                    }
+                    $line = "$cursorMarker$selectionMarker $(& $Label $Item[$itemIndex])"
+                    if ($line.Length -gt $width) {
+                        $line = $line.Substring(0, $width)
+                    }
+                    [Console]::SetCursorPosition(0, $menuTop + $row)
+                    [Console]::Write($line.PadRight($width))
+                }
+                [Console]::SetCursorPosition(0, $menuTop + $windowSize)
+
+                $state = Get-MenuSelectionState -CursorIndex $cursorIndex -ItemCount $Item.Count `
+                    -Key ([Console]::ReadKey($true).Key) -SelectedIndex $selectedIndex -Multiple:$Multiple
+                $cursorIndex = $state.CursorIndex
+                $selectedIndex = @($state.SelectedIndex)
+                if ($state.Confirmed) {
+                    if ($Multiple) {
+                        $selectedItems = @($selectedIndex | ForEach-Object { $Item[$_] })
+                        Write-Host "Selected: $(@($selectedItems | ForEach-Object { & $Label $_ }) -join ', ')" `
+                            -ForegroundColor Green
+                        return $selectedItems
+                    }
+                    Write-Host "Selected: $(& $Label $Item[$cursorIndex])" -ForegroundColor Green
+                    return $Item[$cursorIndex]
+                }
+            }
+        }
+        catch {
+            if ($null -ne $originalCursorVisible) {
+                try {
+                    [Console]::CursorVisible = $originalCursorVisible
+                    $originalCursorVisible = $null
+                }
+                catch {
+                    Write-Verbose "Could not restore console cursor visibility before numbered fallback."
+                }
+            }
+            Write-Warning "Interactive menu is unavailable; using numbered input."
+            return Read-NumberedMenuItem -Prompt $Prompt -Item $Item -Label $Label `
+                -Multiple:$Multiple -DefaultIndex $defaultIndexes
+        }
+        finally {
+            if ($null -ne $originalCursorVisible) {
+                try {
+                    [Console]::CursorVisible = $originalCursorVisible
+                }
+                catch {
+                    Write-Verbose "Could not restore console cursor visibility."
+                }
+            }
+        }
+    }
+
     $canPrompt = [Environment]::UserInteractive -and
         $null -ne $Host.UI -and
         -not [Console]::IsInputRedirected -and
@@ -37,39 +284,13 @@ begin {
 
     if ($canPrompt -and -not $PSBoundParameters.ContainsKey("Format")) {
         $formats = @("zip", "7z", "zstd", "tar.zst", "tar.gz", "tar.xz")
-        Write-Host "Select archive format:"
-        for ($index = 0; $index -lt $formats.Count; $index++) {
-            Write-Host ("  {0}. {1}" -f ($index + 1), $formats[$index])
-        }
-
-        $formatChoice = Read-Host "Format [1: zip]"
-        if (-not [string]::IsNullOrWhiteSpace($formatChoice)) {
-            $formatIndex = 0
-            if (-not [int]::TryParse($formatChoice, [ref]$formatIndex) -or
-                $formatIndex -lt 1 -or
-                $formatIndex -gt $formats.Count) {
-                throw "Format selection must be a number from 1 to $($formats.Count)."
-            }
-           $Format = $formats[$formatIndex - 1]
-       }
-   }
+        $Format = @(Select-MenuItem -Prompt "Select archive format" -Item $formats `
+            -Multiple -DefaultIndex 0)
+    }
 
     if ($canPrompt -and -not $PSBoundParameters.ContainsKey("Level")) {
         $levels = @("Fastest", "Fast", "Normal", "Max", "Ultra")
-        Write-Host "Select compression level:"
-        for ($index = 0; $index -lt $levels.Count; $index++) {
-            Write-Host ("  {0}. {1}" -f ($index + 1), $levels[$index])
-        }
-        $levelChoice = Read-Host "Level [3: Normal]"
-        if (-not [string]::IsNullOrWhiteSpace($levelChoice)) {
-            $levelIndex = 0
-            if (-not [int]::TryParse($levelChoice, [ref]$levelIndex) -or
-                $levelIndex -lt 1 -or
-                $levelIndex -gt $levels.Count) {
-                throw "Level selection must be a number from 1 to $($levels.Count)."
-            }
-            $Level = $levels[$levelIndex - 1]
-        }
+        $Level = Select-MenuItem -Prompt "Select compression level" -Item $levels -DefaultIndex 2
     }
 
     function Get-NormalizedFullPath {
@@ -446,6 +667,20 @@ process {
 }
 
 end {
+    if ($inputPaths.Count -eq 0 -and $canPrompt) {
+        $currentDirectory = (Get-Location).Path
+        $availableItems = @(Get-ChildItem -LiteralPath $currentDirectory -Force -ErrorAction Stop)
+        if ($availableItems.Count -eq 0) {
+            throw "The current directory is empty: $currentDirectory"
+        }
+
+        $selectedItems = @(Select-MenuItem -Prompt "Select items to compress" -Item $availableItems `
+            -Label { param($Item) $Item.Name } -Multiple)
+        foreach ($selectedItem in $selectedItems) {
+            $inputPaths.Add($selectedItem.FullName)
+        }
+    }
+
     $items = foreach ($inputPath in $inputPaths) {
         $resolvedPath = Resolve-Path -LiteralPath $inputPath -ErrorAction SilentlyContinue
         if (-not $resolvedPath) {
@@ -463,7 +698,9 @@ end {
         throw "Compressing a filesystem root is not supported."
     }
 
-    if ($Format -eq "zstd" -and ($items.Count -ne 1 -or $items[0].PSIsContainer)) {
+    $formatsToRun = @($Format | Select-Object -Unique)
+    $zstdInputSupported = $items.Count -eq 1 -and -not $items[0].PSIsContainer
+    if ($formatsToRun -contains "zstd" -and -not $zstdInputSupported) {
         throw "Format 'zstd' only supports one input file. Use 'tar.zst' for directories or multiple inputs."
     }
 
@@ -490,8 +727,6 @@ end {
         "tar.gz"  = @{ Fastest = 1; Fast = 3; Normal = 5; Max = 7; Ultra = 9 }
         "tar.xz"  = @{ Fastest = 0; Fast = 1; Normal = 5; Max = 7; Ultra = 9 }
     }
-    $numericLevel = $levelNumbers[$Format][$Level]
-
     $archiveBaseName = if ($items.Count -eq 1) {
         $items[0].Name.TrimEnd(
             [System.IO.Path]::DirectorySeparatorChar,
@@ -513,28 +748,57 @@ end {
             $Name = $nameChoice
         }
     }
-    $archiveName = if ($Name) {
-        $Name + $extensions[$Format]
-    }
-    else {
-        $archiveBaseName + $extensions[$Format]
-    }
-
+    $normalizedDestination = $null
+    $destinationIsDirectory = $false
     if ($Destination) {
         $destinationIsDirectory = (Test-Path -LiteralPath $Destination -PathType Container) -or
             $Destination.EndsWith([System.IO.Path]::DirectorySeparatorChar) -or
             $Destination.EndsWith([System.IO.Path]::AltDirectorySeparatorChar)
-        $destinationPath = if ($destinationIsDirectory) {
-            Join-Path (Get-NormalizedFullPath -InputPath $Destination) $archiveName
-        }
-        else {
-            if ($PSBoundParameters.ContainsKey("Name")) {
-                Write-Warning "-Name is ignored because -Destination specifies the archive file path."
-            }
-            Get-NormalizedFullPath -InputPath $Destination
+        $normalizedDestination = Get-NormalizedFullPath -InputPath $Destination
+        if (-not $destinationIsDirectory -and $PSBoundParameters.ContainsKey("Name")) {
+            Write-Warning "-Name is ignored because -Destination specifies the archive file path."
         }
     }
-    else {
+
+    $destinationBaseName = $null
+    if ($formatsToRun.Count -gt 1 -and $Destination -and -not $destinationIsDirectory) {
+        $destinationBaseName = [System.IO.Path]::GetFileName($normalizedDestination)
+        foreach ($extension in ($extensions.Values | Sort-Object Length -Descending)) {
+            if ($destinationBaseName.EndsWith($extension, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $destinationBaseName = $destinationBaseName.Substring(
+                    0,
+                    $destinationBaseName.Length - $extension.Length
+                )
+                break
+            }
+        }
+        if (-not $destinationBaseName) {
+            $destinationBaseName = "archive"
+        }
+    }
+
+    function Get-ArchiveDestinationPath {
+        param([Parameter(Mandatory)][string]$CurrentFormat)
+
+        $archiveName = if ($Name) {
+            $Name + $extensions[$CurrentFormat]
+        }
+        else {
+            $archiveBaseName + $extensions[$CurrentFormat]
+        }
+
+        if ($Destination) {
+            if ($destinationIsDirectory) {
+                return Join-Path $normalizedDestination $archiveName
+            }
+            if ($formatsToRun.Count -gt 1) {
+                return Join-Path ([System.IO.Path]::GetDirectoryName($normalizedDestination)) (
+                    $destinationBaseName + $extensions[$CurrentFormat]
+                )
+            }
+            return $normalizedDestination
+        }
+
         $sourceParent = if ($items[0].PSIsContainer) {
             $items[0].Parent.FullName
         }
@@ -545,236 +809,275 @@ end {
             throw "A destination is required when compressing a filesystem root."
         }
 
-        $destinationPath = Join-Path $sourceParent $archiveName
+        return Join-Path $sourceParent $archiveName
     }
 
-    foreach ($item in $items) {
-        if ($destinationPath.Equals($item.FullName, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "Destination cannot overwrite an input path: $destinationPath"
-        }
+    $compressionState = @{}
+    $scriptCmdlet = $PSCmdlet
 
-        if ($item.PSIsContainer) {
-            $sourcePrefix = $item.FullName.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
-            if ($destinationPath.StartsWith($sourcePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-                throw "Destination cannot be inside an input directory: $destinationPath"
+    function Invoke-CompressionFormat {
+        [CmdletBinding(SupportsShouldProcess = $true)]
+        param(
+            [Parameter(Mandatory)][string]$CurrentFormat,
+            [Parameter(Mandatory)][string]$DestinationPath
+        )
+
+        foreach ($item in $items) {
+            if ($DestinationPath.Equals($item.FullName, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Destination cannot overwrite an input path: $DestinationPath"
+            }
+
+            if ($item.PSIsContainer) {
+                $sourcePrefix = $item.FullName.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+                if ($DestinationPath.StartsWith($sourcePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    throw "Destination cannot be inside an input directory: $DestinationPath"
+                }
             }
         }
-    }
 
-    if (Test-Path -LiteralPath $destinationPath) {
-        throw "Destination already exists: $destinationPath"
-    }
-
-    $requiredTools = switch ($Format) {
-        { $_ -in "zip", "7z" } { @("7z"); break }
-        "zstd" { @("zstd"); break }
-        "tar.zst" { @("tar", "zstd"); break }
-        { $_ -in "tar.gz", "tar.xz" } { @("tar", "7z"); break }
-    }
-    $tools = @{}
-    foreach ($toolName in $requiredTools) {
-        $command = Get-Command $toolName -CommandType Application -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-        if (-not $command) {
-            throw "Required tool '$toolName' was not found on PATH for format '$Format'."
+        if (Test-Path -LiteralPath $DestinationPath) {
+            throw "Destination already exists: $DestinationPath"
         }
-        $tools[$toolName] = $command.Source
-    }
 
-    if (-not $PSCmdlet.ShouldProcess($destinationPath, "Create $Format archive")) {
-        return
-    }
+        $requiredTools = switch ($CurrentFormat) {
+            { $_ -in "zip", "7z" } { @("7z"); break }
+            "zstd" { @("zstd"); break }
+            "tar.zst" { @("tar", "zstd"); break }
+            { $_ -in "tar.gz", "tar.xz" } { @("tar", "7z"); break }
+        }
+        $tools = @{}
+        foreach ($toolName in $requiredTools) {
+            $command = Get-Command $toolName -CommandType Application -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if (-not $command) {
+                throw "Required tool '$toolName' was not found on PATH for format '$CurrentFormat'."
+            }
+            $tools[$toolName] = $command.Source
+        }
 
-    $destinationDirectory = [System.IO.Path]::GetDirectoryName($destinationPath)
-    if (-not [System.IO.Directory]::Exists($destinationDirectory)) {
-        [System.IO.Directory]::CreateDirectory($destinationDirectory) | Out-Null
-    }
+        if (-not $scriptCmdlet.ShouldProcess($DestinationPath, "Create $CurrentFormat archive")) {
+            return
+        }
 
-    $temporaryPath = Join-Path $destinationDirectory (
-        ".{0}.{1}.tmp" -f [System.IO.Path]::GetFileName($destinationPath), [guid]::NewGuid().ToString("N")
-    )
-    $inputBytes = Get-InputSize -Items $items
-    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        if (-not $compressionState.ContainsKey("InputBytes")) {
+            $compressionState.InputBytes = Get-InputSize -Items $items
+        }
+        $inputBytes = $compressionState.InputBytes
 
-    Write-Host ""
-    Write-Host "Compressing Items" -ForegroundColor Cyan
-    Write-Host "-----------------"
-    Write-Host ("  Format:  {0} ({1})" -f $Format, $Level) -ForegroundColor DarkGray
-    Write-Host ("  Input:   {0} across {1} item(s)" -f (Format-ByteSize $inputBytes), $items.Count) -ForegroundColor DarkGray
-    Write-Host ("  Threads: {0}" -f $effectiveThreads) -ForegroundColor DarkGray
+        $destinationDirectory = [System.IO.Path]::GetDirectoryName($DestinationPath)
+        if (-not [System.IO.Directory]::Exists($destinationDirectory)) {
+            [System.IO.Directory]::CreateDirectory($destinationDirectory) | Out-Null
+        }
 
-    try {
-        $toolOutput = ""
-        switch ($Format) {
-            { $_ -in "zip", "7z" } {
-                $archiveRoot = if ($items[0].PSIsContainer) {
-                    $items[0].Parent.FullName
-                }
-                else {
-                    $items[0].DirectoryName
-                }
-                foreach ($item in $items) {
-                    while (-not (
-                        $item.FullName.Equals($archiveRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
-                        $item.FullName.StartsWith(
-                            $archiveRoot.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar,
-                            [System.StringComparison]::OrdinalIgnoreCase
-                        )
-                    )) {
-                        $parent = [System.IO.Directory]::GetParent($archiveRoot)
-                        if (-not $parent) {
-                            break
-                        }
-                        $archiveRoot = $parent.FullName
+        $temporaryPath = Join-Path $destinationDirectory (
+            ".{0}.{1}.tmp" -f [System.IO.Path]::GetFileName($DestinationPath), [guid]::NewGuid().ToString("N")
+        )
+        $numericLevel = $levelNumbers[$CurrentFormat][$Level]
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+        Write-Host ""
+        Write-Host "Compressing Items" -ForegroundColor Cyan
+        Write-Host "-----------------"
+        Write-Host ("  Format:  {0} ({1})" -f $CurrentFormat, $Level) -ForegroundColor DarkGray
+        Write-Host ("  Input:   {0} across {1} item(s)" -f (Format-ByteSize $inputBytes), $items.Count) -ForegroundColor DarkGray
+        Write-Host ("  Threads: {0}" -f $effectiveThreads) -ForegroundColor DarkGray
+
+        try {
+            $toolOutput = ""
+            switch ($CurrentFormat) {
+                { $_ -in "zip", "7z" } {
+                    $archiveRoot = if ($items[0].PSIsContainer) {
+                        $items[0].Parent.FullName
                     }
-                }
+                    else {
+                        $items[0].DirectoryName
+                    }
+                    foreach ($item in $items) {
+                        while (-not (
+                            $item.FullName.Equals($archiveRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+                            $item.FullName.StartsWith(
+                                $archiveRoot.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar,
+                                [System.StringComparison]::OrdinalIgnoreCase
+                            )
+                        )) {
+                            $parent = [System.IO.Directory]::GetParent($archiveRoot)
+                            if (-not $parent) {
+                                break
+                            }
+                            $archiveRoot = $parent.FullName
+                        }
+                    }
 
-                $relativePaths = foreach ($item in $items) {
-                    $relativePath = [System.IO.Path]::GetRelativePath($archiveRoot, $item.FullName)
-                    if (-not $relativePath.StartsWith(".")) { ".\$relativePath" } else { $relativePath }
-                }
-                $arguments = @(
-                    "a",
-                    "-t$Format",
-                    $temporaryPath,
-                    "-mx=$numericLevel",
-                    "-mmt=$effectiveThreads",
-                    "-bsp1",
-                    "-y"
-                )
-                if ($Format -eq "7z") {
-                    $arguments += "-ms=on"
-                }
-                $arguments += $relativePaths
-
-                $processResult = Invoke-NativeProcess `
-                    -Executable $tools["7z"] `
-                    -Arguments $arguments `
-                    -WorkingDirectory $archiveRoot
-                $toolOutput = $processResult.Output
-                $exitCode = $processResult.ExitCode
-                break
-            }
-            "zstd" {
-                $arguments = @(
-                    "-f",
-                    "-T$effectiveThreads",
-                    "--long=27",
-                    "-$numericLevel",
-                    $items[0].FullName,
-                    "-o",
-                    $temporaryPath
-                )
-                $processResult = Invoke-NativeProcess `
-                    -Executable $tools["zstd"] `
-                    -Arguments $arguments
-                $toolOutput = $processResult.Output
-                $exitCode = $processResult.ExitCode
-                break
-            }
-            default {
-                $tarArguments = @("-cf", "-")
-                foreach ($item in $items) {
-                    $parentPath = if ($item.PSIsContainer) { $item.Parent.FullName } else { $item.DirectoryName }
-                    $tarArguments += @("-C", $parentPath, ".\$($item.Name)")
-                }
-
-                if ($Format -eq "tar.zst") {
-                    $compressorExecutable = $tools["zstd"]
-                    $compressorArguments = @(
-                        "-q",
-                        "-f",
-                        "-T$effectiveThreads",
-                        "--long=27",
-                        "-$numericLevel",
-                        "-o",
-                        $temporaryPath
-                    )
-                }
-                else {
-                    $sevenZipType = if ($Format -eq "tar.gz") { "gzip" } else { "xz" }
-                    $compressorExecutable = $tools["7z"]
-                    $compressorArguments = @(
+                    $relativePaths = foreach ($item in $items) {
+                        $relativePath = [System.IO.Path]::GetRelativePath($archiveRoot, $item.FullName)
+                        if (-not $relativePath.StartsWith(".")) { ".\$relativePath" } else { $relativePath }
+                    }
+                    $arguments = @(
                         "a",
-                        "-t$sevenZipType",
+                        "-t$CurrentFormat",
                         $temporaryPath,
-                        "-si",
                         "-mx=$numericLevel",
                         "-mmt=$effectiveThreads",
                         "-bsp1",
                         "-y"
                     )
-                }
+                    if ($CurrentFormat -eq "7z") {
+                        $arguments += "-ms=on"
+                    }
+                    $arguments += $relativePaths
 
-                $pipelineResult = Invoke-NativePipeline `
-                    -SourceExecutable $tools["tar"] `
-                    -SourceArguments $tarArguments `
-                    -DestinationExecutable $compressorExecutable `
-                    -DestinationArguments $compressorArguments `
-                    -InputBytes $inputBytes
-                $toolOutput = (@($pipelineResult.Output, $pipelineResult.Error) |
-                    Where-Object { $_ } |
-                    ForEach-Object { $_.Trim() }) -join [Environment]::NewLine
-                $exitCode = if ($pipelineResult.SourceExitCode -ne 0) {
-                    $pipelineResult.SourceExitCode
+                    $processResult = Invoke-NativeProcess `
+                        -Executable $tools["7z"] `
+                        -Arguments $arguments `
+                        -WorkingDirectory $archiveRoot
+                    $toolOutput = $processResult.Output
+                    $exitCode = $processResult.ExitCode
+                    break
                 }
-                else {
-                    $pipelineResult.DestinationExitCode
+                "zstd" {
+                    $arguments = @(
+                        "-f",
+                        "-T$effectiveThreads",
+                        "--long=27",
+                        "-$numericLevel",
+                        $items[0].FullName,
+                        "-o",
+                        $temporaryPath
+                    )
+                    $processResult = Invoke-NativeProcess `
+                        -Executable $tools["zstd"] `
+                        -Arguments $arguments
+                    $toolOutput = $processResult.Output
+                    $exitCode = $processResult.ExitCode
+                    break
                 }
-                break
+                default {
+                    $tarArguments = @("-cf", "-")
+                    foreach ($item in $items) {
+                        $parentPath = if ($item.PSIsContainer) { $item.Parent.FullName } else { $item.DirectoryName }
+                        $tarArguments += @("-C", $parentPath, ".\$($item.Name)")
+                    }
+
+                    if ($CurrentFormat -eq "tar.zst") {
+                        $compressorExecutable = $tools["zstd"]
+                        $compressorArguments = @(
+                            "-q",
+                            "-f",
+                            "-T$effectiveThreads",
+                            "--long=27",
+                            "-$numericLevel",
+                            "-o",
+                            $temporaryPath
+                        )
+                    }
+                    else {
+                        $sevenZipType = if ($CurrentFormat -eq "tar.gz") { "gzip" } else { "xz" }
+                        $compressorExecutable = $tools["7z"]
+                        $compressorArguments = @(
+                            "a",
+                            "-t$sevenZipType",
+                            $temporaryPath,
+                            "-si",
+                            "-mx=$numericLevel",
+                            "-mmt=$effectiveThreads",
+                            "-bsp1",
+                            "-y"
+                        )
+                    }
+
+                    $pipelineResult = Invoke-NativePipeline `
+                        -SourceExecutable $tools["tar"] `
+                        -SourceArguments $tarArguments `
+                        -DestinationExecutable $compressorExecutable `
+                        -DestinationArguments $compressorArguments `
+                        -InputBytes $inputBytes
+                    $toolOutput = (@($pipelineResult.Output, $pipelineResult.Error) |
+                        Where-Object { $_ } |
+                        ForEach-Object { $_.Trim() }) -join [Environment]::NewLine
+                    $exitCode = if ($pipelineResult.SourceExitCode -ne 0) {
+                        $pipelineResult.SourceExitCode
+                    }
+                    else {
+                        $pipelineResult.DestinationExitCode
+                    }
+                    break
+                }
             }
-        }
 
-        if ($exitCode -ne 0) {
-            $message = $toolOutput.Trim()
-            if (-not $message) {
-                $message = "Compression tool exited with code $exitCode."
+            if ($exitCode -ne 0) {
+                $message = $toolOutput.Trim()
+                if (-not $message) {
+                    $message = "Compression tool exited with code $exitCode."
+                }
+                throw $message
             }
-            throw $message
+
+            if (-not [System.IO.File]::Exists($temporaryPath) -or
+                [System.IO.FileInfo]::new($temporaryPath).Length -eq 0) {
+                throw "Compression tool did not create a non-empty archive."
+            }
+
+            [System.IO.File]::Move($temporaryPath, $DestinationPath)
+        }
+        catch {
+            if ([System.IO.File]::Exists($temporaryPath)) {
+                [System.IO.File]::Delete($temporaryPath)
+            }
+            throw "Compression failed: $($_.Exception.Message)"
+        }
+        finally {
+            $stopwatch.Stop()
         }
 
-        if (-not [System.IO.File]::Exists($temporaryPath) -or
-            [System.IO.FileInfo]::new($temporaryPath).Length -eq 0) {
-            throw "Compression tool did not create a non-empty archive."
+        $outputBytes = [System.IO.FileInfo]::new($DestinationPath).Length
+        $ratio = if ($inputBytes -eq 0) { 0 } else { [Math]::Round(($outputBytes / $inputBytes) * 100, 1) }
+
+        Write-Host ("  Output:  {0}" -f (Format-ByteSize $outputBytes)) -ForegroundColor Green
+        Write-Host ("  Ratio:   {0:N1}%" -f $ratio) -ForegroundColor Green
+        Write-Host ("  Elapsed: {0:N2}s" -f $stopwatch.Elapsed.TotalSeconds) -ForegroundColor Green
+        Write-Host ("  Saved:   {0}" -f $DestinationPath) -ForegroundColor Green
+        Write-Host ""
+
+        $replayPaths = ($items.FullName | ForEach-Object { "`"$_`"" }) -join ", "
+        $replayCommand = "compressitem -Path $replayPaths -Format $CurrentFormat -Level $Level -Threads $effectiveThreads -Destination `"$DestinationPath`""
+        Write-Host "In the future, run this command:" -ForegroundColor Cyan
+        Write-Host "  $replayCommand" -ForegroundColor White
+        Write-Host ""
+
+        [pscustomobject]@{
+            InputPaths      = [string[]]$items.FullName
+            DestinationPath = $DestinationPath
+            Format          = $CurrentFormat
+            Level           = $Level
+            Threads         = $effectiveThreads
+            InputBytes      = $inputBytes
+            OutputBytes     = $outputBytes
+            RatioPercent    = $ratio
+            ElapsedSeconds  = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
+            ReplayCommand   = $replayCommand
         }
-
-        [System.IO.File]::Move($temporaryPath, $destinationPath)
     }
-    catch {
-        if ([System.IO.File]::Exists($temporaryPath)) {
-            [System.IO.File]::Delete($temporaryPath)
+
+    $results = @()
+    foreach ($currentFormat in $formatsToRun) {
+        $destinationPath = Get-ArchiveDestinationPath -CurrentFormat $currentFormat
+        $result = Invoke-CompressionFormat -CurrentFormat $currentFormat -DestinationPath $destinationPath
+        if ($null -ne $result) {
+            $results += $result
         }
-        throw "Compression failed: $($_.Exception.Message)"
-    }
-    finally {
-        $stopwatch.Stop()
     }
 
-    $outputBytes = [System.IO.FileInfo]::new($destinationPath).Length
-    $ratio = if ($inputBytes -eq 0) { 0 } else { [Math]::Round(($outputBytes / $inputBytes) * 100, 1) }
-
-    Write-Host ("  Output:  {0}" -f (Format-ByteSize $outputBytes)) -ForegroundColor Green
-    Write-Host ("  Ratio:   {0:N1}%" -f $ratio) -ForegroundColor Green
-    Write-Host ("  Elapsed: {0:N2}s" -f $stopwatch.Elapsed.TotalSeconds) -ForegroundColor Green
-   Write-Host ("  Saved:   {0}" -f $destinationPath) -ForegroundColor Green
-   Write-Host ""
-
-    $replayPaths = ($items.FullName | ForEach-Object { "`"$_`"" }) -join ", "
-    $replayCommand = "compressitem -Path $replayPaths -Format $Format -Level $Level -Threads $effectiveThreads -Destination `"$destinationPath`""
-    Write-Host "In the future, run this command:" -ForegroundColor Cyan
-    Write-Host "  $replayCommand" -ForegroundColor White
-    Write-Host ""
-
-    [pscustomobject]@{
-        InputPaths     = [string[]]$items.FullName
-        DestinationPath = $destinationPath
-        Format          = $Format
-        Level           = $Level
-        Threads         = $effectiveThreads
-        InputBytes      = $inputBytes
-        OutputBytes     = $outputBytes
-       RatioPercent    = $ratio
-       ElapsedSeconds  = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
-        ReplayCommand   = $replayCommand
+    if ($formatsToRun.Count -eq 1) {
+        return $results
     }
+
+    if ($results.Count -gt 0) {
+        $produced = $results | ForEach-Object {
+            "{0} {1}" -f $_.Format, (Format-ByteSize $_.OutputBytes)
+        }
+        Write-Host ("Produced {0} archives: {1}" -f $results.Count, ($produced -join ", ")) `
+            -ForegroundColor Green
+    }
+
+    return $results
 }

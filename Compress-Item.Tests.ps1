@@ -10,10 +10,10 @@ BeforeAll {
 
     function Invoke-CompressProcess {
         param(
-            [Parameter(Mandatory)][string[]]$Path,
+            [string[]]$Path,
             [string]$Destination,
             [string]$Name,
-            [string]$Format = "zip",
+            [string[]]$Format = "zip",
             [string]$Level = "Normal",
             [int]$Threads = 4,
             [string[]]$AvailableTools = @("7z", "zstd", "tar"),
@@ -55,8 +55,17 @@ echo fake tar stream
             $wrapper | Set-Content -LiteralPath (Join-Path $script:FakeBinDirectory "$tool.cmd") -Encoding ascii
         }
 
-        $pathLiterals = $Path | ForEach-Object { ConvertTo-SingleQuotedPowerShellLiteral $_ }
+        $pathLiterals = if ($Path) {
+            $Path | ForEach-Object { ConvertTo-SingleQuotedPowerShellLiteral $_ }
+        }
+        $formatLiterals = $Format | ForEach-Object { ConvertTo-SingleQuotedPowerShellLiteral $_ }
         $scriptLiteral = ConvertTo-SingleQuotedPowerShellLiteral $script:CompressPath
+        $pathArgument = if ($pathLiterals) {
+            "-Path @($($pathLiterals -join ', '))"
+        }
+        else {
+            ""
+        }
         $destinationArgument = if ($Destination) {
             "-Destination " + (ConvertTo-SingleQuotedPowerShellLiteral $Destination)
         }
@@ -70,10 +79,10 @@ echo fake tar stream
             ""
         }
         $invocation = if ($Pipeline) {
-            "@($($pathLiterals -join ', ')) | & $scriptLiteral -Format '$Format' -Level '$Level' -Threads $Threads $destinationArgument $nameArgument"
+            "@($($pathLiterals -join ', ')) | & $scriptLiteral -Format @($($formatLiterals -join ', ')) -Level '$Level' -Threads $Threads $destinationArgument $nameArgument"
         }
         else {
-            "& $scriptLiteral -Path @($($pathLiterals -join ', ')) -Format '$Format' -Level '$Level' -Threads $Threads $destinationArgument $nameArgument"
+            "& $scriptLiteral $pathArgument -Format @($($formatLiterals -join ', ')) -Level '$Level' -Threads $Threads $destinationArgument $nameArgument"
         }
 
         $command = "`$result = $invocation; `$result | ConvertTo-Json -Compress"
@@ -126,8 +135,11 @@ Describe "Compress-Item.ps1" {
 
         $command.Parameters["Path"].ParameterType | Should -Be ([string[]])
         $command.Parameters["Path"].Attributes.ValueFromPipeline | Should -Contain $true
+        $command.Parameters["Path"].Attributes.Mandatory | Should -Not -Contain $true
         $command.Parameters["Name"].ParameterType | Should -Be ([string])
-        $command.Parameters["Format"].Attributes.ValidValues | Should -Contain "tar.zst"
+        $command.Parameters["Format"].ParameterType | Should -Be ([string[]])
+        $command.Parameters["Format"].Attributes.ValidValues |
+            Should -Be @("zip", "7z", "zstd", "tar.zst", "tar.gz", "tar.xz")
         $command.Parameters["Level"].Attributes.ValidValues | Should -Be @("Fastest", "Fast", "Normal", "Max", "Ultra")
         $command.Parameters["Threads"].Attributes.MinRange | Should -Be 0
     }
@@ -258,6 +270,28 @@ Describe "Compress-Item.ps1" {
         Test-Path -LiteralPath $destination | Should -BeTrue
     }
 
+    It "compresses each requested format and reports the produced archives" {
+        $source = Join-Path $script:TestRoot "save.dat"
+        $destinationDirectory = Join-Path $script:TestRoot "output"
+        Set-Content -LiteralPath $source -Value "data"
+        New-Item -ItemType Directory -Path $destinationDirectory | Out-Null
+
+        $process = Invoke-CompressProcess `
+            -Path $source `
+            -Destination $destinationDirectory `
+            -Format zip, 7z `
+            -Level Max
+
+        $process.ExitCode | Should -Be 0 -Because ($process.Output -join "`n")
+        @($process.Result).Count | Should -Be 2
+        @($process.Result.Format) | Should -Be @("zip", "7z")
+        foreach ($result in $process.Result) {
+            Test-Path -LiteralPath $result.DestinationPath | Should -BeTrue
+        }
+        ($process.Output -join "`n") | Should -Match "Produced 2 archives: zip .*7z"
+        ($process.Output -join "`n") | Should -Not -Match "Winner:"
+    }
+
     It "rejects directories for raw zstd compression" {
         $source = Join-Path $script:TestRoot "world"
         New-Item -ItemType Directory -Path $source | Out-Null
@@ -283,5 +317,12 @@ Describe "Compress-Item.ps1" {
 
         $process.ExitCode | Should -Not -Be 0
         ($process.Output -join "`n") | Should -Match "Path does not exist"
+    }
+
+    It "requires input paths when prompting is unavailable" {
+        $process = Invoke-CompressProcess -Format zip
+
+        $process.ExitCode | Should -Not -Be 0
+        ($process.Output -join "`n") | Should -Match "At least one input path is required"
     }
 }
